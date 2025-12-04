@@ -4,11 +4,16 @@ import requests
 import time
 
 # ==========================================
-# 1. 設定區 (API 金鑰與 ID)
+# 1. 設定區 (改用 Secrets 讀取，更安全)
 # ==========================================
-# 請填入您的資訊
-CODA_API_KEY = '15625ea9-aed5-48c6-9c01-53896cce3285' 
-DOC_ID = 'RhBt_TC6r8'
+# 這裡不再直接寫死 Key，而是叫 Python 去「保險箱」拿
+
+try:
+    CODA_API_KEY = st.secrets["CODA_API_KEY"]
+    DOC_ID = st.secrets["DOC_ID"]
+except Exception as e:
+    st.error("❌ 找不到 Secrets 設定！若在本地執行，請檢查 .streamlit/secrets.toml；若在雲端，請檢查 App Settings。")
+    st.stop()
 
 # 表格 ID (請確認 Coda 裡的名稱一致)
 TABLE_ID_DRUGS = 'DB_Drugs'
@@ -218,4 +223,5 @@ with tab4:
                     if row['備註']:
                         st.info(f"💡 備註：{row['備註']}")
     else:
+
         st.info("資料庫讀取中或尚無資料...")
