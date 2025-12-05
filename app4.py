@@ -29,6 +29,7 @@ TABLE_ID_REQUESTS = 'DB_Requests'
 TABLE_ID_CITIES = 'DB_Cities'
 TABLE_ID_INBOX = 'DB_Supply_Inbox'
 TABLE_ID_INVENTORY = 'DB_Inventory'
+TABLE_ID_FEEDBACK = 'DB_Feedback'
 
 headers = {'Authorization': f'Bearer {CODA_API_KEY}'}
 
@@ -84,6 +85,7 @@ def load_inventory_data():
             vals = item['values']
             rows.append({
                 "診所名稱": vals.get("診所", ""), # 這裡抓到的是 Display Name
+                "機構代碼": vals.get("機構代碼", ""),
                 "藥品名稱": vals.get("藥品", ""),
                 "縣市": vals.get("縣市", ""), # <--- 這是剛剛在 Coda 新增的欄位！
                 "庫存狀態": vals.get("庫存狀態", ""),
@@ -144,6 +146,23 @@ def submit_supply(code, name, region, drug_name, conditions, email):
         requests.post(url, headers=headers, json=payload).raise_for_status()
         return True
     except: return False
+
+def submit_feedback(code, drug, email, feedback_type, comment):
+    """寫入民眾回饋"""
+    url = f'https://coda.io/apis/v1/docs/{DOC_ID}/tables/{TABLE_ID_FEEDBACK}/rows'
+    payload = {"rows": [{"cells": [
+        {"column": "機構代碼", "value": code},
+        {"column": "藥品名稱", "value": drug},
+        {"column": "回饋類型", "value": feedback_type},
+        {"column": "民眾Email", "value": email},
+        {"column": "備註", "value": comment},
+    ]}]}
+    try:
+        requests.post(url, headers=headers, json=payload).raise_for_status()
+        return True
+    except Exception as e:
+        st.error(f"回饋失敗: {e}")
+        return False
 
 # ==========================================
 # 3. App 介面
@@ -274,10 +293,11 @@ with tab3:
     st.bar_chart(df_sorted.set_index("藥品名稱")["許願人數"])
     st.dataframe(df_sorted[["藥品名稱", "分類", "許願人數", "供貨診所數"]], hide_index=True, width='stretch')
 
-# --- Tab 4: 找藥 (完整邏輯) ---
+
+# --- Tab 4: 找藥 (含民眾實名回饋功能) ---
 with tab4:
     st.markdown("### 🔍 查詢哪裡有藥")
-
+    
     col_s1, col_s2 = st.columns(2)
     with col_s1:
         search_drug = st.selectbox("請選擇藥品", df_drugs["藥品名稱"].tolist(), key="search_drug")
@@ -285,16 +305,10 @@ with tab4:
         search_city = st.selectbox("請選擇縣市", ["全台灣"] + cities_list, key="search_city")
 
     if not df_inventory.empty:
-        # 1. 篩選藥品
+        # 1. 篩選邏輯 (維持不變)
         result = df_inventory[df_inventory["藥品名稱"] == search_drug]
-        
-        # 2. 篩選是否有上架
         result = result[result["是否上架"] == True]
-        
-        # 3. 篩選是否有貨
         result = result[result["庫存狀態"] != "缺貨"]
-        
-        # 4. 篩選縣市 (關鍵修正)
         if search_city != "全台灣":
             result = result[result["縣市"] == search_city]
         
@@ -303,23 +317,94 @@ with tab4:
         else:
             st.success(f"找到 {len(result)} 間診所有貨！")
             
+            # 2. 顯示卡片迴圈
             for index, row in result.iterrows():
+                # 為了區分不同診所的按鈕，我們需要一個唯一的 key
+                clinic_key = f"{row['診所名稱']}_{index}"
+                
                 with st.container(border=True):
-                    # 標題區：診所名稱
+                    # --- 診所資訊顯示 ---
                     st.markdown(f"#### 🏥 {row['診所名稱']}")
                     
-                    # 標籤區：給付條件
+                    # 顯示標籤
                     conditions = row['給付條件']
-                    # 處理 Coda 可能回傳 string 或 list 的狀況
                     if isinstance(conditions, list):
                         tags = "  |  ".join([f"`{c}`" for c in conditions])
                         st.markdown(tags)
                     else:
                         st.markdown(f"`{conditions}`")
-                        
-                    st.text(f"📍 地點：{row['縣市']}")
                     
+                    st.text(f"📍 地點：{row['縣市']}")
                     if row['備註']:
                         st.info(f"💡 備註：{row['備註']}")
+                    
+                    # --- 🌟 新增：回饋/檢舉摺疊區 ---
+                    with st.expander("💬 我要認證 / 回報問題"):
+                        st.caption("為防止惡意洗版，回報需驗證 Email。")
+                        
+                        # 定義 session key 來記住這家診所的驗證狀態
+                        v_state_key = f"verify_state_{clinic_key}"
+                        v_code_key = f"verify_code_{clinic_key}"
+                        v_email_key = f"verify_email_{clinic_key}"
+                        
+                        # 初始化狀態
+                        if v_state_key not in st.session_state:
+                            st.session_state[v_state_key] = False
+
+                        # === 階段 1: 驗證 Email ===
+                        if not st.session_state[v_state_key]:
+                            user_email = st.text_input("您的 Email", key=f"email_{clinic_key}")
+                            col_fv1, col_fv2 = st.columns([1, 2])
+                            
+                            with col_fv1:
+                                if st.button("寄碼", key=f"btn_send_{clinic_key}"):
+                                    if not user_email:
+                                        st.error("請填 Email")
+                                    else:
+                                        code = str(random.randint(100000, 999999))
+                                        st.session_state[v_code_key] = code
+                                        st.session_state[v_email_key] = user_email
+                                        with st.spinner("寄信中..."):
+                                            if send_verification_email(user_email, code):
+                                                st.toast(f"驗證碼已寄至 {user_email}", icon="📧")
+                            
+                            with col_fv2:
+                                user_code = st.text_input("驗證碼", max_chars=6, key=f"code_{clinic_key}")
+                                if st.button("驗證", key=f"btn_verify_{clinic_key}"):
+                                    # 比對驗證碼
+                                    correct_code = st.session_state.get(v_code_key)
+                                    if correct_code and user_code == correct_code:
+                                        st.session_state[v_state_key] = True
+                                        st.rerun()
+                                    else:
+                                        st.error("驗證碼錯誤")
+                        
+                        # === 階段 2: 填寫回饋 (驗證通過後顯示) ===
+                        else:
+                            st.success(f"已驗證：{st.session_state[v_email_key]}")
+                            
+                            feedback_type = st.radio(
+                                "請選擇回報類型：",
+                                ["✅ 認證有貨 (我成功領/買到了)", "⚠️ 資訊不實 (缺貨/條件不符/拒收)"],
+                                key=f"type_{clinic_key}"
+                            )
+                            
+                            comment = st.text_area("補充說明 (選填)", placeholder="例如：櫃台說要下週才有貨...", key=f"comment_{clinic_key}")
+                            
+                            if st.button("📤 送出評價", key=f"btn_submit_{clinic_key}"):
+                                # 這裡需要從 Inventory 抓回 機構代碼 (因為 DB_Inventory 沒有直接存代碼，我們之前是用文字寫入的)
+                                # 如果您之前 DB_Inventory 有新增 '機構代碼' 文字欄位，這裡就可以抓得到
+                                # 如果沒有，我們用診所名稱代替，或者再去 DB_Providers 查 (這裡假設您 Inventory 有存機構代碼文字欄位)
+                                
+                                # 嘗試抓取機構代碼 (如果在 load_inventory_data 有加入讀取的話)
+                                # 為了保險，這裡我們用 '診所名稱' 當作代碼傳送，或者您可以在 load_inventory_data 補上 '機構代碼'
+                                target_code = row.get('機構代碼', row['診所名稱']) 
+                                
+                                if submit_feedback(target_code, search_drug, st.session_state[v_email_key], feedback_type, comment):
+                                    st.success("感謝您的回報！")
+                                    st.balloons()
+                                    # 提交後可以選擇關閉驗證狀態
+                                    # st.session_state[v_state_key] = False 
+
     else:
         st.info("資料庫讀取中或尚無資料...")
