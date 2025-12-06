@@ -86,24 +86,39 @@ def submit_wish(email, region, drug):
     except: return False
 
 def submit_raw_wish(email, region, new_drug_name):
+    """
+    寫入 DB_Wishlist (除錯模式：會顯示詳細錯誤)
+    """
+    # 1. 檢查變數是否定義
+    if 'TABLE_ID_WISHLIST' not in globals():
+        st.error("❌ 程式碼缺少變數設定！請在最上方加入： TABLE_ID_WISHLIST = 'DB_Wishlist'")
+        return False
+
+    url = f'https://coda.io/apis/v1/docs/{DOC_ID}/tables/{TABLE_ID_WISHLIST}/rows'
+    
     payload = {
         "rows": [
             {
                 "cells": [
                     {"column": "許願者Email", "value": str(email)},
-                    {"column": "所在縣市", "value": str(region)},      # 這裡送出 "基隆市"，Coda 會自動連到 DB_Cities
-                    {"column": "建議藥名", "value": str(new_drug_name)}, # 這是純文字
-                    {"column": "狀態", "value": "待處理"}             # 預設狀態
+                    {"column": "所在縣市", "value": str(region)},
+                    {"column": "建議藥名", "value": str(new_drug_name)},
+                    {"column": "狀態", "value": "待處理"} 
                 ]
             }
         ]
     }
     
     try:
-        requests.post(url, headers=headers, json=payload).raise_for_status()
+        r = requests.post(url, headers=headers, json=payload)
+        r.raise_for_status() # 如果失敗，會跳到 except
         return True
+        
     except Exception as e:
-        print(f"寫入 Wishlist 失敗: {e}")
+        st.error(f"❌ 寫入失敗！原因：{e}")
+        # 如果有 Coda 的回傳訊息，也印出來 (通常會告訴你哪個欄位錯了)
+        if 'r' in locals():
+            st.code(r.text, language='json')
         return False
 
 def submit_supply(code, name, region, drug, conds, email):
@@ -409,6 +424,7 @@ elif selected_tab == "🔍 找哪裡有藥":
         
     else:
         st.info("資料庫讀取中...")
+
 
 
 
