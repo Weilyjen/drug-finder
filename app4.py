@@ -7,7 +7,7 @@ from email.mime.text import MIMEText
 import random
 
 # ==========================================
-# 1. 設定區 (Secrets)
+# 1. 設定區
 # ==========================================
 try:
     CODA_API_KEY = st.secrets["CODA_API_KEY"]
@@ -15,10 +15,9 @@ try:
     MAIL_ACCOUNT = st.secrets["MAIL_ACCOUNT"]
     MAIL_PASSWORD = st.secrets["MAIL_PASSWORD"]
 except:
-    st.error("設定檔讀取失敗！請檢查 .streamlit/secrets.toml 或雲端 Secrets 設定。")
+    st.error("設定檔讀取失敗！")
     st.stop()
 
-# 表格 ID
 TABLE_ID_DRUGS = 'DB_Drugs'
 TABLE_ID_REQUESTS = 'DB_Requests'
 TABLE_ID_CITIES = 'DB_Cities'
@@ -34,139 +33,65 @@ headers = {'Authorization': f'Bearer {CODA_API_KEY}'}
 
 @st.cache_data(ttl=60)
 def load_drugs_data():
-    """讀取藥品清單"""
     url = f'https://coda.io/apis/v1/docs/{DOC_ID}/tables/{TABLE_ID_DRUGS}/rows?useColumnNames=true'
     try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-        rows = []
-        for item in data['items']:
-            vals = item['values']
-            rows.append({
-                "藥品名稱": vals.get("藥品名稱", "未知"), 
-                "分類": vals.get("藥品分類", ""),
-            })
-        return pd.DataFrame(rows)
-    except:
-        return pd.DataFrame()
+        r = requests.get(url, headers=headers); r.raise_for_status(); data = r.json()
+        return pd.DataFrame([{'藥品名稱':i['values'].get('藥品名稱',''), '分類':i['values'].get('藥品分類','')} for i in data['items']])
+    except: return pd.DataFrame()
 
 @st.cache_data(ttl=3600)
 def load_cities_data():
-    """讀取縣市清單"""
     url = f'https://coda.io/apis/v1/docs/{DOC_ID}/tables/{TABLE_ID_CITIES}/rows?useColumnNames=true'
     try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-        items = data['items']
-        items.sort(key=lambda x: x['index'])
-        return [item['name'] for item in items]
-    except:
-        return []
+        r = requests.get(url, headers=headers); r.raise_for_status(); data = r.json(); items = data['items']; items.sort(key=lambda x: x['index'])
+        return [i['name'] for i in items]
+    except: return []
 
 @st.cache_data(ttl=10)
 def load_requests_raw():
-    """讀取許願池"""
     url = f'https://coda.io/apis/v1/docs/{DOC_ID}/tables/{TABLE_ID_REQUESTS}/rows?useColumnNames=true&limit=1000'
     try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-        rows = []
-        for item in data['items']:
-            vals = item['values']
-            rows.append({
-                "想要藥品": vals.get("想要藥品", ""), 
-                "所在縣市": vals.get("所在縣市", ""),
-            })
-        return pd.DataFrame(rows)
-    except:
-        return pd.DataFrame()
+        r = requests.get(url, headers=headers); r.raise_for_status(); data = r.json()
+        return pd.DataFrame([{'想要藥品':i['values'].get('想要藥品',''), '所在縣市':i['values'].get('所在縣市','')} for i in data['items']])
+    except: return pd.DataFrame()
 
 @st.cache_data(ttl=30)
 def load_inventory_data():
-    """讀取庫存 (關鍵：必須讀取代碼)"""
     url = f'https://coda.io/apis/v1/docs/{DOC_ID}/tables/{TABLE_ID_INVENTORY}/rows?useColumnNames=true'
     try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-        rows = []
-        for item in data['items']:
-            vals = item['values']
-            # 優先讀取 '縣市1' (新版)，若無則讀 '縣市'
-            city_val = vals.get("縣市1", vals.get("縣市", ""))
-            rows.append({
-                "診所名稱": vals.get("診所", ""), # 這是 Display Column，會抓到名稱
-                "機構代碼": vals.get("機構代碼", ""), # 這是我們手動加的文字欄位，抓代碼
-                "藥品名稱": vals.get("藥品", ""),
-                "縣市": city_val,  
-                "庫存狀態": vals.get("庫存狀態", ""),
-                "給付條件": vals.get("給付條件", ""),
-                "是否上架": vals.get("是否上架", False),
-                "備註": vals.get("備註", "") 
-            })
-        return pd.DataFrame(rows)
-    except:
-        return pd.DataFrame()
+        r = requests.get(url, headers=headers); r.raise_for_status(); data = r.json()
+        return pd.DataFrame([{'診所名稱':i['values'].get('診所',''), '機構代碼':i['values'].get('機構代碼',''), '藥品名稱':i['values'].get('藥品',''), '縣市':i['values'].get('縣市1', i['values'].get('縣市','')), '庫存狀態':i['values'].get('庫存狀態',''), '給付條件':i['values'].get('給付條件',''), '是否上架':i['values'].get('是否上架',False), '備註':i['values'].get('備註','')} for i in data['items']])
+    except: return pd.DataFrame()
 
-@st.cache_data(ttl=10)
+@st.cache_data(ttl=5) # 縮短快取時間，確保回饋即時顯示
 def load_feedback_data():
-    """讀取回饋 (Display Column 是代碼，所以 '機構代碼' 會抓到代碼)"""
     url = f'https://coda.io/apis/v1/docs/{DOC_ID}/tables/{TABLE_ID_FEEDBACK}/rows?useColumnNames=true&limit=500'
     try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-        rows = []
-        for item in data['items']:
-            vals = item['values']
-            rows.append({
-                "機構代碼": vals.get("機構代碼", ""), 
-                "藥品名稱": vals.get("藥品名稱", ""),
-                "回饋類型": vals.get("回饋類型", ""),
-                "備註": vals.get("備註", ""),
-                "時間": vals.get("回報時間", "") 
-            })
-        return pd.DataFrame(rows)
-    except:
-        return pd.DataFrame()
+        r = requests.get(url, headers=headers); r.raise_for_status(); data = r.json()
+        return pd.DataFrame([{'機構代碼':i['values'].get('機構代碼',''), '藥品名稱':i['values'].get('藥品名稱',''), '回饋類型':i['values'].get('回饋類型',''), '備註':i['values'].get('備註',''), '時間':i['values'].get('回報時間','')} for i in data['items']])
+    except: return pd.DataFrame()
 
 def send_verification_email(to_email, code):
-    """發送驗證信"""
-    subject = "【藥品特搜網】身分驗證碼"
-    body = f"您的驗證碼為：{code}\n\n請在網頁上輸入此代碼以完成操作。\n感謝您的使用！"
-    msg = MIMEText(body)
-    msg['Subject'] = subject
-    msg['From'] = MAIL_ACCOUNT
-    msg['To'] = to_email
+    msg = MIMEText(f"驗證碼：{code}"); msg['Subject']="【藥品特搜網】驗證碼"; msg['From']=MAIL_ACCOUNT; msg['To']=to_email
     try:
-        server = smtplib.SMTP('smtp.gmail.com', 587)
-        server.starttls()
-        server.login(MAIL_ACCOUNT, MAIL_PASSWORD)
-        server.sendmail(MAIL_ACCOUNT, to_email, msg.as_string())
-        server.quit()
-        return True
-    except:
-        return False
+        s = smtplib.SMTP('smtp.gmail.com', 587); s.starttls(); s.login(MAIL_ACCOUNT, MAIL_PASSWORD); s.sendmail(MAIL_ACCOUNT, to_email, msg.as_string()); s.quit(); return True
+    except: return False
 
-def submit_wish(email, region, drug_name):
-    url = f'https://coda.io/apis/v1/docs/{DOC_ID}/tables/{TABLE_ID_REQUESTS}/rows'
-    payload = {"rows": [{"cells": [{"column": "許願者Email", "value": email}, {"column": "所在縣市", "value": region}, {"column": "想要藥品", "value": drug_name}]}]}
+def submit_wish(email, region, drug):
+    url=f'https://coda.io/apis/v1/docs/{DOC_ID}/tables/{TABLE_ID_REQUESTS}/rows'
+    payload={"rows":[{"cells":[{"column":"許願者Email","value":email},{"column":"所在縣市","value":region},{"column":"想要藥品","value":drug}]}]}
     try: requests.post(url, headers=headers, json=payload).raise_for_status(); return True
     except: return False
 
-def submit_supply(code, name, region, drug_name, conditions, email):
-    url = f'https://coda.io/apis/v1/docs/{DOC_ID}/tables/{TABLE_ID_INBOX}/rows'
-    payload = {"rows": [{"cells": [{"column": "機構代碼", "value": code}, {"column": "診所名稱", "value": name}, {"column": "所在縣市", "value": region}, {"column": "提供藥品", "value": drug_name}, {"column": "給付條件", "value": conditions}, {"column": "聯絡Email", "value": email}]}]}
+def submit_supply(code, name, region, drug, conds, email):
+    url=f'https://coda.io/apis/v1/docs/{DOC_ID}/tables/{TABLE_ID_INBOX}/rows'
+    payload={"rows":[{"cells":[{"column":"機構代碼","value":code},{"column":"診所名稱","value":name},{"column":"所在縣市","value":region},{"column":"提供藥品","value":drug},{"column":"給付條件","value":conds},{"column":"聯絡Email","value":email}]}]}
     try: requests.post(url, headers=headers, json=payload).raise_for_status(); return True
     except: return False
 
-def submit_feedback(code, drug, email, feedback_type, comment):
-    # 因為 DB_Feedback 的 Display Column 是「機構代碼」，所以這裡必須傳入代碼
-    url = f'https://coda.io/apis/v1/docs/{DOC_ID}/tables/{TABLE_ID_FEEDBACK}/rows'
-    payload = {"rows": [{"cells": [{"column": "機構代碼", "value": code}, {"column": "藥品名稱", "value": drug}, {"column": "回饋類型", "value": feedback_type}, {"column": "民眾Email", "value": email}, {"column": "備註", "value": comment}]}]}
+def submit_feedback(code, drug, email, type, comment):
+    url=f'https://coda.io/apis/v1/docs/{DOC_ID}/tables/{TABLE_ID_FEEDBACK}/rows'
+    payload={"rows":[{"cells":[{"column":"機構代碼","value":code},{"column":"藥品名稱","value":drug},{"column":"回饋類型","value":type},{"column":"民眾Email","value":email},{"column":"備註","value":comment}]}]}
     try: requests.post(url, headers=headers, json=payload).raise_for_status(); return True
     except: return False
 
@@ -177,33 +102,52 @@ def submit_feedback(code, drug, email, feedback_type, comment):
 st.set_page_config(page_title="全台缺藥特搜網", page_icon="💊")
 st.title("💊 全台缺藥特搜網")
 
+# 初始化 session state 用於導航
+if 'current_tab' not in st.session_state:
+    st.session_state.current_tab = "🔍 找哪裡有藥" # 預設首頁
+
+# [UX改良 1] 使用 radio 當作導航列，取代 st.tabs，這樣可以程式化控制跳轉
+selected_tab = st.radio(
+    "", 
+    ["🔍 找哪裡有藥", "📢 民眾許願", "🏥 診所回報供貨", "📊 熱度排行榜"], 
+    horizontal=True,
+    label_visibility="collapsed",
+    key="nav_radio",
+    index=["🔍 找哪裡有藥", "📢 民眾許願", "🏥 診所回報供貨", "📊 熱度排行榜"].index(st.session_state.current_tab)
+)
+
+# 更新 session state
+if selected_tab != st.session_state.current_tab:
+    st.session_state.current_tab = selected_tab
+
+# 資料載入
 df_drugs = load_drugs_data()
 cities_list = load_cities_data()
 df_inventory = load_inventory_data()
 df_feedback = load_feedback_data()
 
-if df_drugs.empty:
-    st.error("無法連接資料庫")
-    st.stop()
+if df_drugs.empty: st.stop()
 
-tab1, tab2, tab3, tab4 = st.tabs(["📢 民眾許願", "🏥 診所回報供貨", "📊 熱度排行榜", "🔍 找哪裡有藥"])
-
-# --- Tab 1: 民眾許願 ---
-with tab1:
+# ==========================================
+# Tab 1: 民眾許願
+# ==========================================
+if selected_tab == "📢 民眾許願":
     st.markdown("#### 找不到藥嗎？請填寫需求")
     with st.form("wish_form"):
-        u_email = st.text_input("您的 Email", placeholder="name@example.com")
-        u_region = st.selectbox("所在縣市", cities_list) if cities_list else st.text_input("縣市")
-        u_drug = st.selectbox("想找什麼藥？", df_drugs["藥品名稱"].tolist())
-        if st.form_submit_button("🚀 送出許願"):
+        u_email = st.text_input("Email", placeholder="name@example.com")
+        u_region = st.selectbox("縣市", cities_list) if cities_list else st.text_input("縣市")
+        u_drug = st.selectbox("藥品", df_drugs["藥品名稱"].tolist())
+        if st.form_submit_button("🚀 送出"):
             if submit_wish(u_email, u_region, u_drug):
-                st.success(f"已記錄！")
+                st.success("已記錄！")
                 st.cache_data.clear()
 
-# --- Tab 2: 診所回報 ---
-with tab2:
+# ==========================================
+# Tab 2: 診所回報
+# ==========================================
+elif selected_tab == "🏥 診所回報供貨":
     st.markdown("#### 我是醫事機構，我有藥！")
-    st.info("💡 初次填寫需驗證 Email。")
+    
     if "is_verified" not in st.session_state: st.session_state.is_verified = False
     if "verify_code" not in st.session_state: st.session_state.verify_code = None
     if "email_input" not in st.session_state: st.session_state.email_input = ""
@@ -212,145 +156,153 @@ with tab2:
         with st.container(border=True):
             st.subheader("🔐 身分驗證")
             email_input = st.text_input("診所 Email")
-            c1, c2 = st.columns([1, 2])
+            c1, c2 = st.columns([1,2])
             with c1:
                 if st.button("寄送驗證碼"):
                     if email_input:
-                        code = str(random.randint(100000, 999999))
-                        st.session_state.verify_code = code
-                        st.session_state.email_input = email_input
-                        with st.spinner("寄信中..."):
-                            if send_verification_email(email_input, code): st.success("已寄出")
+                        code = str(random.randint(100000,999999))
+                        st.session_state.verify_code = code; st.session_state.email_input = email_input
+                        send_verification_email(email_input, code)
+                        st.toast("已寄出")
             with c2:
-                user_code = st.text_input("輸入驗證碼", max_chars=6)
-                if st.button("確認"):
+                user_code = st.text_input("驗證碼", max_chars=6)
+                if st.button("驗證"):
                     if user_code == st.session_state.verify_code:
                         st.session_state.is_verified = True
-                        st.rerun()
+                        st.rerun() # 這裡 rerun 不會跳頁，因為我們用 session state 控制了 nav_radio
                     else: st.error("錯誤")
     else:
         st.success(f"已驗證：{st.session_state.email_input}")
         with st.container(border=True):
-            st.subheader("📋 填寫供貨資訊")
-            col1, col2 = st.columns(2)
-            with col1:
-                c_code = st.text_input("機構代碼", max_chars=10)
-                c_name = st.text_input("診所名稱")
-            with col2:
-                c_email = st.text_input("Email", value=st.session_state.email_input, disabled=True)
-                c_region = st.selectbox("縣市", cities_list, key="c_city_v")
-            c_drug = st.selectbox("藥品", df_drugs["藥品名稱"].tolist(), key="c_drug_v")
-            c_conditions = st.multiselect("給付條件", ["健保", "自費", "國健署專案"])
+            st.subheader("📋 供貨資訊")
+            c_code = st.text_input("機構代碼", max_chars=10)
+            c_name = st.text_input("診所名稱")
+            c_email = st.text_input("Email", value=st.session_state.email_input, disabled=True)
+            c_region = st.selectbox("縣市", cities_list)
+            c_drug = st.selectbox("藥品", df_drugs["藥品名稱"].tolist())
+            c_conds = st.multiselect("條件", ["健保", "自費", "國健署專案"])
             if st.button("📤 提交", type="primary"):
-                if submit_supply(c_code, c_name, c_region, c_drug, c_conditions, c_email):
-                    st.success("提交成功，待審核。")
+                if submit_supply(c_code, c_name, c_region, c_drug, c_conds, c_email):
+                    st.success("提交成功！")
 
-# --- Tab 3: 排行榜 ---
-with tab3:
-    st.markdown("### 🔥 缺藥熱度排行榜 (即時統計)")
-    if st.button("🔄 刷新數據"):
-        st.cache_data.clear(); st.rerun()
-    df_raw_requests = load_requests_raw()
-    if not df_raw_requests.empty:
-        df_detailed = df_raw_requests.groupby(["想要藥品", "所在縣市"]).size().reset_index(name="人次")
-        df_detailed = df_detailed.sort_values(by="人次", ascending=False)
-        df_chart = df_raw_requests.groupby("想要藥品").size().reset_index(name="總人次")
-        df_chart = df_chart.sort_values(by="總人次", ascending=False).head(10)
-        st.caption("全台總熱度 Top 10")
-        st.bar_chart(df_chart.set_index("想要藥品")["總人次"])
-        st.markdown("#### 📋 詳細數據")
-        st.dataframe(df_detailed, column_config={"想要藥品":"藥品名稱","所在縣市":"區域","人次":st.column_config.NumberColumn("許願人次", format="%d")}, hide_index=True, width='stretch')
-    else:
-        st.info("尚無許願資料")
+# ==========================================
+# Tab 3: 排行榜
+# ==========================================
+elif selected_tab == "📊 熱度排行榜":
+    st.markdown("### 🔥 缺藥熱度")
+    if st.button("🔄 刷新"): st.cache_data.clear(); st.rerun()
+    df_raw = load_requests_raw()
+    if not df_raw.empty:
+        df_chart = df_raw.groupby("想要藥品").size().reset_index(name="人次").sort_values("人次", ascending=False).head(10)
+        st.bar_chart(df_chart.set_index("想要藥品")["人次"])
+        st.dataframe(df_raw.groupby(["想要藥品","所在縣市"]).size().reset_index(name="人次").sort_values("人次", ascending=False), hide_index=True, width='stretch')
 
-# --- Tab 4: 找藥 (修正顯示邏輯) ---
-with tab4:
+# ==========================================
+# Tab 4: 找藥 (UX 大改版)
+# ==========================================
+elif selected_tab == "🔍 找哪裡有藥":
     st.markdown("### 🔍 藥品供貨清單")
-    col_s1, col_s2 = st.columns(2)
-    with col_s1: search_drug = st.selectbox("藥品篩選", ["全部"] + df_drugs["藥品名稱"].tolist(), key="sd")
-    with col_s2: search_city = st.selectbox("縣市篩選", ["全台灣"] + cities_list, key="sc")
+    
+    # 搜尋區
+    c1, c2 = st.columns(2)
+    s_drug = c1.selectbox("藥品", ["全部"]+df_drugs["藥品名稱"].tolist())
+    s_city = c2.selectbox("縣市", ["全台灣"]+cities_list)
 
     if not df_inventory.empty:
-        # 過濾邏輯
         res = df_inventory[(df_inventory["庫存狀態"]=="有貨") & (df_inventory["是否上架"]==True)].copy()
-        if search_drug != "全部": res = res[res["藥品名稱"] == search_drug]
-        if search_city != "全台灣": res = res[res["縣市"] == search_city]
+        if s_drug != "全部": res = res[res["藥品名稱"]==s_drug]
+        if s_city != "全台灣": res = res[res["縣市"]==s_city]
         
         # 排序
         res['縣市'] = pd.Categorical(res['縣市'], categories=cities_list, ordered=True)
         res = res.sort_values(by=["藥品名稱", "縣市"])
 
         if res.empty:
-            st.warning(f"目前條件下尚無庫存資料。")
+            st.warning("尚無資料")
         else:
-            st.success(f"共找到 {len(res)} 筆供貨資訊")
+            st.success(f"找到 {len(res)} 筆")
             
+            # 初始化：用來記錄目前哪一個診所的回報視窗是打開的
+            if 'active_feedback_id' not in st.session_state:
+                st.session_state.active_feedback_id = None
+
             for idx, row in res.iterrows():
                 cid = f"{row['診所名稱']}_{idx}"
-                # 這裡抓取代碼：優先抓 '機構代碼'，若無則抓 '診所名稱' (防止當機)
                 clinic_code = row.get('機構代碼', row['診所名稱'])
                 drug_name = row['藥品名稱']
                 
                 with st.container(border=True):
-                    # --- 診所資訊 (顯示名稱) ---
+                    # 顯示資訊
                     st.markdown(f"#### 💊 {drug_name}  |  🏥 {row['診所名稱']}")
                     conds = row['給付條件']
-                    cond_str = "  |  ".join([f"`{c}`" for c in conds]) if isinstance(conds, list) else f"`{conds}`"
-                    st.markdown(f"📍 **{row['縣市']}**")
-                    st.markdown(f"🏷️ 給付條件：{cond_str}")
+                    st.markdown(f"📍 **{row['縣市']}** | 🏷️ {' '.join([f'`{c}`' for c in (conds if isinstance(conds, list) else [conds])])}")
                     if row['備註']: st.info(f"備註: {row['備註']}")
-                    
-                    # --- 評價統計 (比對代碼) ---
+
+                    # 顯示評價摘要
                     if not df_feedback.empty:
-                        # 關鍵：這裡用 code 來比對
-                        reviews = df_feedback[(df_feedback['機構代碼'] == clinic_code) & (df_feedback['藥品名稱'] == drug_name)]
-                        if not reviews.empty:
-                            count_ok = len(reviews[reviews['回饋類型'].str.contains("認證", na=False)])
-                            count_bad = len(reviews[reviews['回饋類型'].str.contains("不實", na=False)])
-                            
-                            st.markdown("---")
-                            rc1, rc2 = st.columns(2)
-                            with rc1:
-                                if count_ok > 0: st.markdown(f"✅ **{count_ok} 人認證有貨**")
-                            with rc2:
-                                if count_bad > 0: st.markdown(f":red[⚠️ **{count_bad} 人回報問題**]")
-                            
-                            with st.expander(f"查看 {len(reviews)} 則民眾回報"):
-                                for _, r_row in reviews.iterrows():
-                                    icon = "✅" if "認證" in r_row['回饋類型'] else "⚠️"
-                                    msg = r_row['備註'] if r_row['備註'] else "(無文字留言)"
-                                    time_str = r_row['時間'][:10] if r_row['時間'] else ""
-                                    st.text(f"{icon} {time_str} - {msg}")
+                        revs = df_feedback[(df_feedback['機構代碼']==clinic_code) & (df_feedback['藥品名稱']==drug_name)]
+                        if not revs.empty:
+                            ok = len(revs[revs['回饋類型'].str.contains("認證")])
+                            bad = len(revs[revs['回饋類型'].str.contains("不實")])
+                            st.markdown(f"✅ **{ok}**　⚠️ **{bad}**")
+                            # 只有當使用者想看時才展開，避免畫面雜亂
+                            with st.expander(f"查看 {len(revs)} 則留言"):
+                                for _, r in revs.iterrows():
+                                    st.text(f"{r['回報時間'][:10]} {('✅' if '認證' in r['回饋類型'] else '⚠️')} : {r['備註']}")
+
+                    # [UX改良 2] 回報按鈕 - 點擊後鎖定該診所，不會因為重整而關閉
+                    if st.session_state.active_feedback_id != cid:
+                        if st.button("💬 我要回報/認證", key=f"btn_open_{cid}"):
+                            st.session_state.active_feedback_id = cid
+                            st.rerun()
                     
-                    # --- 回報按鈕 (寫入代碼) ---
-                    with st.expander("💬 認證 / 回報"):
-                        v_key, c_key, e_key = f"vs_{cid}", f"vc_{cid}", f"ve_{cid}"
-                        if v_key not in st.session_state: st.session_state[v_key] = False
+                    # [UX改良 3] 只有被鎖定的診所才會顯示表單 (取代 Expander)
+                    if st.session_state.active_feedback_id == cid:
+                        st.markdown("---")
+                        st.markdown("##### 📝 填寫回報")
                         
-                        if not st.session_state[v_key]:
-                            umail = st.text_input("Email", key=f"em_{cid}")
-                            b1, b2 = st.columns([1,2])
-                            with b1:
-                                if st.button("寄碼", key=f"bs_{cid}"):
+                        # 這裡使用內嵌容器，而不是 Expander
+                        with st.container():
+                            # 驗證狀態管理
+                            v_key = f"verified_{cid}"
+                            if v_key not in st.session_state: st.session_state[v_key] = False
+                            
+                            # 步驟 A: 驗證
+                            if not st.session_state[v_key]:
+                                col_f1, col_f2 = st.columns([1,1])
+                                umail = col_f1.text_input("您的 Email", key=f"mail_{cid}")
+                                if col_f1.button("寄驗證碼", key=f"send_{cid}"):
                                     code = str(random.randint(100000,999999))
-                                    st.session_state[c_key], st.session_state[e_key] = code, umail
+                                    st.session_state[f"code_{cid}"] = code
                                     send_verification_email(umail, code)
                                     st.toast("已寄出")
-                            with b2:
-                                ucode = st.text_input("驗證碼", max_chars=6, key=f"cd_{cid}")
-                                if st.button("驗證", key=f"bv_{cid}"):
-                                    if ucode == st.session_state.get(c_key):
+                                
+                                ucode = col_f2.text_input("驗證碼", max_chars=6, key=f"code_in_{cid}")
+                                if col_f2.button("驗證身分", key=f"verify_{cid}"):
+                                    if ucode == st.session_state.get(f"code_{cid}"):
                                         st.session_state[v_key] = True
+                                        st.rerun() # 驗證成功，重整顯示下一步
+                                    else:
+                                        st.error("驗證碼錯誤")
+                            
+                            # 步驟 B: 填寫與送出
+                            else:
+                                fb_type = st.radio("回報類型", ["✅ 認證有貨", "⚠️ 資訊不實"], key=f"type_{cid}")
+                                cmmt = st.text_area("詳細說明", key=f"cmmt_{cid}")
+                                
+                                col_b1, col_b2 = st.columns([1, 4])
+                                if col_b1.button("📤 送出", type="primary", key=f"sub_{cid}"):
+                                    if submit_feedback(clinic_code, drug_name, st.session_state.get(f"mail_{cid}"), fb_type, cmmt):
+                                        st.success("回報成功！")
+                                        # [UX改良 4] 成功後清除鎖定，關閉表單，並清除快取以即時顯示評價
+                                        st.session_state.active_feedback_id = None 
+                                        load_feedback_data.clear()
+                                        time.sleep(1)
                                         st.rerun()
-                        else:
-                            st.success("已驗證")
-                            fb_type = st.radio("類型", ["✅ 認證有貨", "⚠️ 資訊不實"], key=f"ft_{cid}")
-                            cmmt = st.text_area("說明", key=f"cm_{cid}")
-                            if st.button("送出", key=f"sub_{cid}"):
-                                if submit_feedback(clinic_code, drug_name, st.session_state[e_key], fb_type, cmmt):
-                                    st.success("感謝回報")
-                                    time.sleep(1)
-                                    st.cache_data.clear()
+                                
+                                if col_b2.button("取消", key=f"cancel_{cid}"):
+                                    st.session_state.active_feedback_id = None
                                     st.rerun()
+
     else:
         st.info("資料庫讀取中...")
