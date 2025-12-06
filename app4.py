@@ -143,10 +143,38 @@ def submit_supply(code, name, region, drug, conds, email):
     except: return False
 
 def submit_feedback(code, drug, email, type, comment):
-    url=f'https://coda.io/apis/v1/docs/{DOC_ID}/tables/{TABLE_ID_FEEDBACK}/rows'
-    payload={"rows":[{"cells":[{"column":"機構代碼","value":code},{"column":"藥品名稱","value":drug},{"column":"回饋類型","value":type},{"column":"民眾Email","value":email},{"column":"備註","value":comment}]}]}
-    try: requests.post(url, headers=headers, json=payload).raise_for_status(); return True
-    except: return False
+    # 1. 檢查變數內容 (在終端機印出，方便除錯)
+    print(f"準備寫入回報: 機構={code}, 藥品={drug}, Email={email}, 類型={type}")
+
+    url = f'https://coda.io/apis/v1/docs/{DOC_ID}/tables/{TABLE_ID_FEEDBACK}/rows'
+    
+    # 2. 確保送出的資料格式正確
+    payload = {
+        "rows": [
+            {
+                "cells": [
+                    {"column": "機構代碼", "value": str(code)},
+                    {"column": "藥品名稱", "value": str(drug)},
+                    {"column": "回饋類型", "value": str(type)},
+                    {"column": "民眾Email", "value": str(email) if email else ""},
+                    {"column": "備註", "value": str(comment)}
+                ]
+            }
+        ]
+    }
+    
+    try:
+        r = requests.post(url, headers=headers, json=payload)
+        r.raise_for_status() # 如果 Coda 回傳 400/500 錯誤，會跳到 except
+        return True
+        
+    except Exception as e:
+        st.error(f"❌ 回報寫入失敗！")
+        st.write(f"系統錯誤訊息: {e}")
+        # 這是最關鍵的：印出 Coda 告訴我們為什麼失敗
+        if 'r' in locals():
+            st.code(r.text, language='json')
+        return False
 
 # ==========================================
 # 3. App 介面
@@ -522,3 +550,4 @@ elif selected_tab == "🔍 找哪裡有藥":
                                     st.rerun()
         else:
              st.info("資料庫讀取中，請稍候...")
+
