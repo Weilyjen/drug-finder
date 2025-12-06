@@ -29,7 +29,7 @@ TABLE_ID_FEEDBACK = 'DB_Feedback'
 headers = {'Authorization': f'Bearer {CODA_API_KEY}'}
 
 # ==========================================
-# 2. 核心函式 (定義區)
+# 2. 核心函式
 # ==========================================
 
 @st.cache_data(ttl=60)
@@ -95,6 +95,7 @@ def load_inventory_data():
         rows = []
         for item in data['items']:
             vals = item['values']
+            # 優先抓取 '縣市1' (新版)，若無則抓 '縣市'
             city_val = vals.get("縣市1", vals.get("縣市", ""))
             rows.append({
                 "診所名稱": vals.get("診所", ""), 
@@ -110,7 +111,6 @@ def load_inventory_data():
     except:
         return pd.DataFrame()
 
-# [新增] 讀取回饋資料 (快取設短一點，10秒，方便您刪除後立刻更新)
 @st.cache_data(ttl=10)
 def load_feedback_data():
     """讀取民眾回饋"""
@@ -127,7 +127,7 @@ def load_feedback_data():
                 "藥品名稱": vals.get("藥品名稱", ""),
                 "回饋類型": vals.get("回饋類型", ""),
                 "備註": vals.get("備註", ""),
-                "時間": vals.get("回報時間", "") # Coda 的 Created time
+                "時間": vals.get("回報時間", "") 
             })
         return pd.DataFrame(rows)
     except:
@@ -179,7 +179,7 @@ st.title("💊 全台缺藥特搜網")
 df_drugs = load_drugs_data()
 cities_list = load_cities_data()
 df_inventory = load_inventory_data()
-df_feedback = load_feedback_data() # [新增] 載入回饋資料
+df_feedback = load_feedback_data()
 
 if df_drugs.empty:
     st.error("無法連接資料庫")
@@ -262,7 +262,7 @@ with tab3:
     else:
         st.info("尚無許願資料")
 
-# --- Tab 4: 找藥 (含顯示評價) ---
+# --- Tab 4: 找藥 ---
 with tab4:
     st.markdown("### 🔍 藥品供貨清單")
     col_s1, col_s2 = st.columns(2)
@@ -270,6 +270,7 @@ with tab4:
     with col_s2: search_city = st.selectbox("縣市篩選", ["全台灣"] + cities_list, key="sc")
 
     if not df_inventory.empty:
+        # 過濾邏輯
         res = df_inventory[(df_inventory["庫存狀態"]=="有貨") & (df_inventory["是否上架"]==True)].copy()
         if search_drug != "全部": res = res[res["藥品名稱"] == search_drug]
         if search_city != "全台灣": res = res[res["縣市"] == search_city]
@@ -289,7 +290,7 @@ with tab4:
                 drug_name = row['藥品名稱']
                 
                 with st.container(border=True):
-                    # --- 卡片上半部：診所資訊 ---
+                    # 診所資訊
                     st.markdown(f"#### 💊 {drug_name}  |  🏥 {row['診所名稱']}")
                     conds = row['給付條件']
                     cond_str = "  |  ".join([f"`{c}`" for c in conds]) if isinstance(conds, list) else f"`{conds}`"
@@ -297,42 +298,57 @@ with tab4:
                     st.markdown(f"🏷️ 給付條件：{cond_str}")
                     if row['備註']: st.info(f"備註: {row['備註']}")
                     
-                    # --- [新增] 顯示回饋數據 ---
+                    # 評價統計
                     if not df_feedback.empty:
-                        # 篩選出這家診所、這個藥品的評價
-                        # 比對 機構代碼 (優先) 或 診所名稱 (備用)
-                        reviews = df_feedback[
-                            (df_feedback['機構代碼'] == clinic_code) & 
-                            (df_feedback['藥品名稱'] == drug_name)
-                        ]
-                        
+                        reviews = df_feedback[(df_feedback['機構代碼'] == clinic_code) & (df_feedback['藥品名稱'] == drug_name)]
                         if not reviews.empty:
-                            # 統計 正評 與 負評
                             count_ok = len(reviews[reviews['回饋類型'].str.contains("認證", na=False)])
                             count_bad = len(reviews[reviews['回饋類型'].str.contains("不實", na=False)])
-                            
-                            st.markdown("---") # 分隔線
-                            
-                            # 顯示統計數字
+                            st.markdown("---")
                             rc1, rc2 = st.columns(2)
                             with rc1:
                                 if count_ok > 0: st.markdown(f"✅ **{count_ok} 人認證有貨**")
                             with rc2:
                                 if count_bad > 0: st.markdown(f":red[⚠️ **{count_bad} 人回報問題**]")
-                                
-                            # 顯示詳細評論 (摺疊)
+                            
                             with st.expander(f"查看 {len(reviews)} 則民眾回報"):
                                 for _, r_row in reviews.iterrows():
                                     icon = "✅" if "認證" in r_row['回饋類型'] else "⚠️"
                                     msg = r_row['備註'] if r_row['備註'] else "(無文字留言)"
-                                    # 顯示：[圖示] 留言內容 (時間)
-                                    # 時間只取前10碼 (YYYY-MM-DD) 簡潔一點
                                     time_str = r_row['時間'][:10] if r_row['時間'] else ""
                                     st.text(f"{icon} {time_str} - {msg}")
                     
-                    # --- 卡片下半部：我要回報按鈕 ---
-                    with st.expander("💬 我也要認證 / 回報"):
+                    # 回報區塊
+                    with st.expander("💬 認證 / 回報"):
                         v_key, c_key, e_key = f"vs_{cid}", f"vc_{cid}", f"ve_{cid}"
                         if v_key not in st.session_state: st.session_state[v_key] = False
                         
                         if not st.session_state[v_key]:
+                            # 注意這裡的縮排
+                            umail = st.text_input("Email", key=f"em_{cid}")
+                            b1, b2 = st.columns([1,2])
+                            with b1:
+                                if st.button("寄碼", key=f"bs_{cid}"):
+                                    code = str(random.randint(100000,999999))
+                                    st.session_state[c_key], st.session_state[e_key] = code, umail
+                                    send_verification_email(umail, code)
+                                    st.toast("已寄出")
+                            with b2:
+                                ucode = st.text_input("驗證碼", max_chars=6, key=f"cd_{cid}")
+                                if st.button("驗證", key=f"bv_{cid}"):
+                                    if ucode == st.session_state.get(c_key):
+                                        st.session_state[v_key] = True
+                                        st.rerun()
+                        else:
+                            st.success("已驗證")
+                            fb_type = st.radio("類型", ["✅ 認證有貨", "⚠️ 資訊不實"], key=f"ft_{cid}")
+                            cmmt = st.text_area("說明", key=f"cm_{cid}")
+                            if st.button("送出", key=f"sub_{cid}"):
+                                t_code = row.get('機構代碼', row['診所名稱'])
+                                if submit_feedback(t_code, row['藥品名稱'], st.session_state[e_key], fb_type, cmmt):
+                                    st.success("感謝回報")
+                                    time.sleep(1)
+                                    st.cache_data.clear()
+                                    st.rerun()
+    else:
+        st.info("資料庫讀取中...")
