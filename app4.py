@@ -259,7 +259,56 @@ if selected_tab == "📢 民眾許願":
             # 這裡把藥名串接起來顯示，例如：欣剋疹帶狀疱疹疫苗、某某藥...
             drug_names = pending_drugs["建議藥名"].unique().tolist()
             st.write("、".join([f"**{d}**" for d in drug_names]))
-             
+
+    st.divider()
+    
+    # 讀取 Wishlist 資料
+    df_wish = load_wishlist_data()
+    
+    # 確保資料表有 "狀態" 欄位
+    if not df_wish.empty and "狀態" in df_wish.columns:
+        
+        # === 區塊 A: 🎉 賀！審核通過 (剛加入 DB_Drugs 的新藥) ===
+        # 邏輯：找出狀態是 "已加入" 的藥品
+        approved_drugs = df_wish[df_wish["狀態"] == "已加入"]
+        
+        if not approved_drugs.empty:
+            st.success(f"🎉 賀！共有 {len(approved_drugs)} 款新藥通過審核，已加入票選名單！")
+            st.markdown("👇 **點擊按鈕，搶先投下第一票：**")
+            
+            # 顯示這些新藥，並加上 +1 按鈕
+            # 為了版面整齊，我們用 columns 排列，一行放 2~3 個
+            cols = st.columns(2) 
+            for i, (idx, row) in enumerate(approved_drugs.iterrows()):
+                drug_name = row["建議藥名"]
+                
+                # 輪流使用 column (左 -> 右 -> 左...)
+                with cols[i % 2]:
+                    with st.container(border=True):
+                        st.markdown(f"**💊 {drug_name}**")
+                        # 這裡的 key 加上 "approved" 以示區別
+                        if st.button(f"🙋‍♂️ 投我一票", key=f"vote_new_{idx}"):
+                            # 直接幫忙送出選票到 DB_Requests
+                            default_city = "全台灣" if "全台灣" in cities_list else (cities_list[0] if cities_list else "全台灣")
+                            
+                            if submit_wish("new_arrival@vote", default_city, drug_name):
+                                st.balloons() # 慶祝一下
+                                st.toast(f"已為 {drug_name} 開張第一票！")
+                                load_requests_raw.clear() # 清除計票快取
+                                time.sleep(1)
+                                st.rerun()
+
+        # === 區塊 B: ⏳ 審核中 (原本的邏輯) ===
+        pending_drugs = df_wish[df_wish["狀態"] == "待處理"]
+        if not pending_drugs.empty:
+            st.info(f"🆕 尚有 {len(pending_drugs)} 款新藥正在審核中...")
+            # 簡單列出藥名即可
+            drug_names = pending_drugs["建議藥名"].unique().tolist()
+            st.caption("、".join([f"{d}" for d in drug_names]))
+
+    st.divider()
+    
+    
     # --- 熱門許願榜 ---
     st.subheader("🔥 大家都在找這些藥 (點擊 +1 幫忙集氣)")
 
@@ -458,6 +507,7 @@ elif selected_tab == "🔍 找哪裡有藥":
         
     else:
         st.info("資料庫讀取中...")
+
 
 
 
