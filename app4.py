@@ -283,15 +283,58 @@ with tab2:
                             # 提交後可以選擇是否重置驗證狀態，這裡我們先保留，方便他繼續填下一筆藥
 
 
-# --- Tab 3: 排行榜 ---
+# --- Tab 3: 排行榜 (Python 直接統計版) ---
 with tab3:
-    st.markdown("### 🔥 缺藥熱度排行榜")
-    if st.button("🔄 刷新"):
-        st.cache_data.clear()
-        st.rerun()
-    df_sorted = df_drugs.sort_values(by="許願人數", ascending=False).head(10)
-    st.bar_chart(df_sorted.set_index("藥品名稱")["許願人數"])
-    st.dataframe(df_sorted[["藥品名稱", "分類", "許願人數", "供貨診所數"]], hide_index=True, width='stretch')
+    st.markdown("### 🔥 缺藥熱度排行榜 (即時統計)")
+    
+    col_t1, col_t2 = st.columns([1, 3])
+    with col_t1:
+        if st.button("🔄 刷新數據"):
+            st.cache_data.clear()
+            st.rerun()
+            
+    # 1. 讀取原始資料
+    df_raw_requests = load_requests_raw()
+    
+    if not df_raw_requests.empty:
+        # -------------------------------------------
+        # 統計邏輯 A: 依照「藥品 + 縣市」分組計算
+        # -------------------------------------------
+        # groupby: 把相同藥品和縣市的資料綁在一起
+        # size(): 計算有幾筆
+        # reset_index(name='人次'): 把計算結果命名為 '人次'
+        df_detailed = df_raw_requests.groupby(["想要藥品", "所在縣市"]).size().reset_index(name="人次")
+        
+        # 排序：人次多的在上面
+        df_detailed = df_detailed.sort_values(by="人次", ascending=False)
+        
+        # -------------------------------------------
+        # 統計邏輯 B: 純藥品排行 (畫圖用)
+        # -------------------------------------------
+        df_chart = df_raw_requests.groupby("想要藥品").size().reset_index(name="總人次")
+        df_chart = df_chart.sort_values(by="總人次", ascending=False).head(10)
+        
+        # --- 顯示長條圖 (總熱度) ---
+        st.caption("全台總熱度 Top 10")
+        st.bar_chart(df_chart.set_index("想要藥品")["總人次"])
+        
+        # --- 顯示詳細表格 (您要求的 3 個欄位) ---
+        st.markdown("#### 📋 各縣市詳細數據")
+        
+        # 稍微美化表格，讓它寬度拉滿
+        st.dataframe(
+            df_detailed,
+            column_config={
+                "想要藥品": "藥品名稱",
+                "所在縣市": "區域",
+                "人次": st.column_config.NumberColumn("許願人次", format="%d 人")
+            },
+            hide_index=True,
+            width='stretch'
+        )
+        
+    else:
+        st.info("目前還沒有人許願喔！")
 
 
 # --- Tab 4: 找藥 (含民眾實名回饋功能) ---
@@ -408,3 +451,4 @@ with tab4:
 
     else:
         st.info("資料庫讀取中或尚無資料...")
+
