@@ -271,38 +271,39 @@ elif selected_tab == "🔍 找哪裡有藥":
                                         st.rerun()
                                     else:
                                         st.error("驗證碼錯誤")
-# 修改後的程式碼建議
-# ---------------------------------------------------------
-else:
-    # 1. 宣告一個 Form (表單)，這能確保資料送出前不會因為 Rerun 而消失
-    with st.form(key=f"feedback_form_{cid}"):
-        
-        fb_type = st.radio("回報類型", ["✅ 認證有貨", "⚠️ 資訊不實"], key=f"type_{cid}")
-        cmmt = st.text_area("詳細說明", key=f"cmmt_{cid}")
-        
-        col_b1, col_b2 = st.columns([1, 4])
-        
-        # 2. 關鍵修改：將普通 button 改為 form_submit_button
-        # 注意：在 form 裡面，這兩個按鈕按下去都會觸發 "Submit" 行為
-        submitted = col_b1.form_submit_button("📤 送出", type="primary")
-        cancelled = col_b2.form_submit_button("取消")
-
-    # 3. 處理邏輯移到 Form 區塊外面
-    if submitted:
-        # 加入 print 以確認後端有收到訊號
-        print(f"[{cid}] 送出按鈕被觸發，準備寫入...") 
-        
-        # 呼叫您的寫入函式
-        if submit_feedback(clinic_code, drug_name, st.session_state.get(f"mail_{cid}"), fb_type, cmmt):
-            st.success("回報成功！")
-            st.session_state.active_feedback_id = None 
-            # load_feedback_data.clear() # 如果這是快取清除，請確保語法正確
-            time.sleep(1)
-            st.rerun()
-            
-    if cancelled:
-        st.session_state.active_feedback_id = None
-        st.rerun()
+                                # 修改後的程式碼建議
+                                # ---------------------------------------------------------
+                                else:
+                                    # 1. 宣告一個 Form (表單)，這能確保資料送出前不會因為 Rerun 而消失
+                                    with st.form(key=f"feedback_form_{cid}"):
+                                        
+                                        fb_type = st.radio("回報類型", ["✅ 認證有貨", "⚠️ 資訊不實"], key=f"type_{cid}")
+                                        cmmt = st.text_area("詳細說明", key=f"cmmt_{cid}")
+                                        
+                                        col_b1, col_b2 = st.columns([1, 4])
+                                        
+                                        # 2. 關鍵修改：將普通 button 改為 form_submit_button
+                                        # 注意：在 form 裡面，這兩個按鈕按下去都會觸發 "Submit" 行為
+                                        submitted = col_b1.form_submit_button("📤 送出", type="primary")
+                                        cancelled = col_b2.form_submit_button("取消")
+                                
+                                    # 3. 處理邏輯移到 Form 區塊外面
+                                    if submitted:
+                                        # 加入 print 以確認後端有收到訊號
+                                        print(f"[{cid}] 送出按鈕被觸發，準備寫入...") 
+                                        
+                                        # 呼叫您的寫入函式
+                                        if submit_feedback(clinic_code, drug_name, st.session_state.get(f"mail_{cid}"), fb_type, cmmt):
+                                            st.success("回報成功！")
+                                            st.session_state.active_feedback_id = None 
+                                            # load_feedback_data.clear() # 如果這是快取清除，請確保語法正確
+                                            time.sleep(1)
+                                            st.rerun()
+                                            
+                                    if cancelled:
+                                        st.session_state.active_feedback_id = None
+                                        st.rerun()
         
     else:
         st.info("資料庫讀取中...")
+
