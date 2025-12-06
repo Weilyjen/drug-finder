@@ -126,7 +126,7 @@ df_feedback = load_feedback_data()
 if df_drugs.empty: st.stop()
 
 # ==========================================
-# Tab 1: 民眾許願
+# Tab 1: 民眾許願 (修改版：含統計與+1功能)
 # ==========================================
 if selected_tab == "📢 民眾許願":
     st.markdown("#### 找不到藥嗎？請填寫需求")
@@ -138,6 +138,78 @@ if selected_tab == "📢 民眾許願":
             if submit_wish(u_email, u_region, u_drug):
                 st.success("已記錄！")
                 st.cache_data.clear()
+
+elif selected_tab == "📢 民眾許願":
+    st.markdown("### 🎋 民眾許願池 & 缺藥排行")
+
+    # --- 1. 準備統計數據 ---
+    # 讀取現有的許願資料
+    df_req = load_requests_raw()
+    
+    # 統計每個藥品出現的次數
+    if not df_req.empty:
+        # value_counts 會自動算出頻次，並由高到低排序
+        rank_df = df_req["想要藥品"].value_counts().reset_index()
+        rank_df.columns = ["想要藥品", "人次"]
+    else:
+        rank_df = pd.DataFrame(columns=["想要藥品", "人次"])
+
+    # --- 2. 新增許願區塊 (摺疊起來，節省空間) ---
+    with st.expander("➕ 找不到不在榜上的藥？點此發起新許願", expanded=False):
+        with st.form("wish_form"):
+            st.write("填寫新藥品需求：")
+            u_email = st.text_input("Email (選填)", placeholder="name@example.com")
+            u_region = st.selectbox("您的縣市", cities_list) if cities_list else st.text_input("縣市")
+            # 這裡保留原本的邏輯，讓用戶可以選既有的藥品或輸入新的
+            u_drug_input = st.selectbox("選擇或輸入藥品", df_drugs["藥品名稱"].tolist())
+            
+            # 使用 form_submit_button 確保邏輯正確
+            if st.form_submit_button("🚀 送出新許願", type="primary"):
+                # 如果 email 沒填，給個預設值
+                final_email = u_email if u_email else "anonymous@wish"
+                
+                if submit_wish(final_email, u_region, u_drug_input):
+                    st.success(f"已記錄您的需求：{u_drug_input}")
+                    # 清除快取，讓數據能即時更新
+                    load_requests_raw.clear()
+                    time.sleep(1)
+                    st.rerun()
+
+    st.divider()
+    
+    # --- 3. 熱門許願榜 (推薦藥品 & +1 功能) ---
+    st.subheader("🔥 大家都在找這些藥 (點擊 +1 幫忙集氣)")
+
+    if rank_df.empty:
+        st.info("目前還沒有人許願，搶頭香嗎？👆")
+    else:
+        # 取前 20 名顯示，避免列表過長
+        for idx, row in rank_df.head(20).iterrows():
+            drug_name = row["想要藥品"]
+            count = row["人次"]
+            
+            # 使用 columns 切分版面：左邊顯示資訊，右邊顯示按鈕
+            c_text, c_btn = st.columns([4, 1])
+            
+            with c_text:
+                st.markdown(f"**💊 {drug_name}**")
+                # 顯示集氣進度條 (假設 50 人次為滿條，可自行調整)
+                st.progress(min(count / 50.0, 1.0))
+                st.caption(f"目前集氣：{count} 人次")
+            
+            with c_btn:
+                # 垂直置中按鈕有點難，直接放按鈕即可
+                # ⚠️ 重點：key 必須唯一，我們用 drug_name 加 idx 當作 key
+                if st.button(f"🙋‍♂️ +1", key=f"plus1_{idx}_{drug_name}"):
+                    # 直接呼叫 submit_wish，帶入預設值
+                    if submit_wish("plus1@vote", "全台灣", drug_name):
+                        st.toast(f"感謝！已為 {drug_name} 投下一票！")
+                        # 清除快取並重整頁面，讓數字馬上跳動
+                        load_requests_raw.clear()
+                        time.sleep(0.5)
+                        st.rerun()
+            
+            st.divider() # 分隔線
 
 # ==========================================
 # Tab 2: 診所回報
@@ -306,4 +378,5 @@ elif selected_tab == "🔍 找哪裡有藥":
         
     else:
         st.info("資料庫讀取中...")
+
 
