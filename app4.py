@@ -15,7 +15,7 @@ try:
     MAIL_ACCOUNT = st.secrets["MAIL_ACCOUNT"]
     MAIL_PASSWORD = st.secrets["MAIL_PASSWORD"]
 except:
-    st.error("設定檔讀取失敗！")
+    st.error("設定檔讀取失敗！請檢查 .streamlit/secrets.toml")
     st.stop()
 
 TABLE_ID_DRUGS = 'DB_Drugs'
@@ -63,7 +63,6 @@ def load_wishlist_data():
         r = requests.get(url, headers=headers)
         r.raise_for_status()
         data = r.json()
-        # 抓取我們需要的欄位：建議藥名、狀態
         return pd.DataFrame([
             {
                 '建議藥名': i['values'].get('建議藥名', ''),
@@ -88,7 +87,6 @@ def load_feedback_data():
     url = f'https://coda.io/apis/v1/docs/{DOC_ID}/tables/{TABLE_ID_FEEDBACK}/rows?useColumnNames=true&limit=500'
     try:
         r = requests.get(url, headers=headers); r.raise_for_status(); data = r.json()
-        # [修正點] 這裡定義的 key 是 '時間'
         return pd.DataFrame([{'機構代碼':i['values'].get('機構代碼',''), '藥品名稱':i['values'].get('藥品名稱',''), '回饋類型':i['values'].get('回饋類型',''), '備註':i['values'].get('備註',''), '時間':i['values'].get('回報時間','')} for i in data['items']])
     except: return pd.DataFrame()
 
@@ -108,7 +106,6 @@ def submit_raw_wish(email, region, new_drug_name):
     """
     寫入 DB_Wishlist (除錯模式：會顯示詳細錯誤)
     """
-    # 1. 檢查變數是否定義
     if 'TABLE_ID_WISHLIST' not in globals():
         st.error("❌ 程式碼缺少變數設定！請在最上方加入： TABLE_ID_WISHLIST = 'DB_Wishlist'")
         return False
@@ -130,12 +127,11 @@ def submit_raw_wish(email, region, new_drug_name):
     
     try:
         r = requests.post(url, headers=headers, json=payload)
-        r.raise_for_status() # 如果失敗，會跳到 except
+        r.raise_for_status()
         return True
         
     except Exception as e:
         st.error(f"❌ 寫入失敗！原因：{e}")
-        # 如果有 Coda 的回傳訊息，也印出來 (通常會告訴你哪個欄位錯了)
         if 'r' in locals():
             st.code(r.text, language='json')
         return False
@@ -245,69 +241,41 @@ if selected_tab == "📢 民眾許願":
 
     st.divider()
 
-    st.divider()
     df_wish = load_wishlist_data()
     
     # 過濾出狀態是 "待處理" 的資料
     if not df_wish.empty and "狀態" in df_wish.columns:
-        pending_drugs = df_wish[df_wish["狀態"] == "待處理"]
-        
-        if not pending_drugs.empty:
-            st.info(f"🆕 目前有 {len(pending_drugs)} 款新藥正在審核中，即將加入票選：")
-            
-            # 用類似標籤的方式顯示藥名
-            # 這裡把藥名串接起來顯示，例如：欣剋疹帶狀疱疹疫苗、某某藥...
-            drug_names = pending_drugs["建議藥名"].unique().tolist()
-            st.write("、".join([f"**{d}**" for d in drug_names]))
-
-    st.divider()
-    
-    # 讀取 Wishlist 資料
-    df_wish = load_wishlist_data()
-    
-    # 確保資料表有 "狀態" 欄位
-    if not df_wish.empty and "狀態" in df_wish.columns:
         
         # === 區塊 A: 🎉 賀！審核通過 (剛加入 DB_Drugs 的新藥) ===
-        # 邏輯：找出狀態是 "已加入" 的藥品
         approved_drugs = df_wish[df_wish["狀態"] == "已加入"]
         
         if not approved_drugs.empty:
             st.success(f"🎉 賀！共有 {len(approved_drugs)} 款新藥通過審核，已加入票選名單！")
             st.markdown("👇 **點擊按鈕，搶先投下第一票：**")
             
-            # 顯示這些新藥，並加上 +1 按鈕
-            # 為了版面整齊，我們用 columns 排列，一行放 2~3 個
             cols = st.columns(2) 
             for i, (idx, row) in enumerate(approved_drugs.iterrows()):
                 drug_name = row["建議藥名"]
-                
-                # 輪流使用 column (左 -> 右 -> 左...)
                 with cols[i % 2]:
                     with st.container(border=True):
                         st.markdown(f"**💊 {drug_name}**")
-                        # 這裡的 key 加上 "approved" 以示區別
                         if st.button(f"🙋‍♂️ 投我一票", key=f"vote_new_{idx}"):
-                            # 直接幫忙送出選票到 DB_Requests
                             default_city = "全台灣" if "全台灣" in cities_list else (cities_list[0] if cities_list else "全台灣")
-                            
                             if submit_wish("new_arrival@vote", default_city, drug_name):
-                                st.balloons() # 慶祝一下
+                                st.balloons()
                                 st.toast(f"已為 {drug_name} 開張第一票！")
-                                load_requests_raw.clear() # 清除計票快取
+                                load_requests_raw.clear()
                                 time.sleep(1)
                                 st.rerun()
 
-        # === 區塊 B: ⏳ 審核中 (原本的邏輯) ===
+        # === 區塊 B: ⏳ 審核中 ===
         pending_drugs = df_wish[df_wish["狀態"] == "待處理"]
         if not pending_drugs.empty:
-            st.info(f"🆕 尚有 {len(pending_drugs)} 款新藥正在審核中...")
-            # 簡單列出藥名即可
+            st.info(f"🆕 目前有 {len(pending_drugs)} 款新藥正在審核中，即將加入票選：")
             drug_names = pending_drugs["建議藥名"].unique().tolist()
-            st.caption("、".join([f"{d}" for d in drug_names]))
+            st.write("、".join([f"**{d}**" for d in drug_names]))
 
     st.divider()
-    
     
     # --- 熱門許願榜 ---
     st.subheader("🔥 大家都在找這些藥 (點擊 +1 幫忙集氣)")
@@ -326,13 +294,8 @@ if selected_tab == "📢 民眾許願":
                 st.caption(f"目前集氣：{count} 人次")
             
             with c_btn:
-                # 點擊 +1，預設帶入 "全台灣" (或您可改為預設某個縣市)
-                # 若 DB_Requests 的縣市也是 Relation，這裡寫入文字 "全台灣" 也必須在 DB_Cities 裡有對應資料
-                # 建議：若 DB_Cities 裡有 "全台灣" 這個選項最好，若沒有，請改帶入 cities_list[0] 或其他有效縣市
                 if st.button(f"🙋‍♂️ +1", key=f"plus1_{idx}_{drug_name}"):
-                    # 注意：這裡的縣市建議使用一個通用值
                     default_city = "全台灣" if "全台灣" in cities_list else cities_list[0]
-                    
                     if submit_wish("plus1@vote", default_city, drug_name):
                         st.toast(f"已為 {drug_name} +1！")
                         load_requests_raw.clear()
@@ -396,17 +359,16 @@ elif selected_tab == "📊 熱度排行榜":
         st.dataframe(df_raw.groupby(["想要藥品","所在縣市"]).size().reset_index(name="人次").sort_values("人次", ascending=False), hide_index=True, width='stretch')
 
 # ==========================================
-# Tab 4: 找藥 (修改版：含分類篩選、搜尋與導引)
+# Tab 4: 找藥 (修正版：恢復回報驗證功能)
 # ==========================================
 elif selected_tab == "🔍 找哪裡有藥":
     st.markdown("### 🔍 藥品供貨清單")
     
-    # --- 1. 篩選區塊 (分類 & 關鍵字) ---
+    # --- 1. 篩選區塊 ---
     with st.container(border=True):
         col_filter1, col_filter2 = st.columns(2)
         
         # [A] 藥品分類篩選
-        # 取得所有不重複的分類，並加上 "全部"
         unique_cats = ["全部"] + sorted(df_drugs["分類"].astype(str).unique().tolist())
         sel_cat = col_filter1.selectbox("📂 1. 先選分類 (選填)", unique_cats)
         
@@ -415,85 +377,61 @@ elif selected_tab == "🔍 找哪裡有藥":
 
     # --- 2. 執行過濾邏輯 ---
     filtered_drugs_df = df_drugs.copy()
-
-    # 邏輯 A: 如果有選分類
     if sel_cat != "全部":
         filtered_drugs_df = filtered_drugs_df[filtered_drugs_df["分類"] == sel_cat]
-
-    # 邏輯 B: 如果有輸入關鍵字
     if search_keyword:
         filtered_drugs_df = filtered_drugs_df[
             filtered_drugs_df["藥品名稱"].str.contains(search_keyword, case=False)
         ]
 
-    # --- 3. 處理搜尋結果 (導引邏輯) ---
-    
-    # 狀況一：搜尋後完全沒有藥品 -> 導引去許願
+    # --- 3. 處理搜尋結果 ---
     if filtered_drugs_df.empty:
         st.warning(f"🤔 找不到名稱包含「{search_keyword}」且分類為「{sel_cat}」的藥品...")
-        
         col_help1, col_help2 = st.columns([2, 1])
-        with col_help1:
-            st.markdown("👉 **資料庫還沒收錄這個藥嗎？**")
+        with col_help1: st.markdown("👉 **資料庫還沒收錄這個藥嗎？**")
         with col_help2:
             if st.button("🙋‍♂️ 前往許願池新增", type="primary"):
-                # 切換 Tab 到許願
                 st.session_state.current_tab = "📢 民眾許願"
-                # (選用) 可以把關鍵字存起來，帶到許願頁面的輸入框 (需配合 Tab 1 修改)
-                # st.session_state.prefill_drug = search_keyword 
                 st.rerun()
-                
-    # 狀況二：有找到藥品 -> 顯示正常的搜尋介面
     else:
-        # 準備藥品選單 (只顯示過濾後的藥品)
+        # 準備藥品選單
         drug_options = ["全部"] + filtered_drugs_df["藥品名稱"].tolist()
         
         st.divider()
         col_sel1, col_sel2 = st.columns(2)
-        
-        # [C] 最終藥品選擇 (連動過濾後的清單)
         s_drug = col_sel1.selectbox("💊 3. 選擇藥品", drug_options)
-        
-        # [D] 縣市選擇
         s_city = col_sel2.selectbox("📍 4. 選擇縣市", ["全台灣"] + cities_list)
 
-        # --- 4. 查詢庫存邏輯 (原本的程式碼) ---
+        # --- 4. 查詢庫存邏輯 ---
         if not df_inventory.empty:
-            # 這裡要注意：如果不選藥品(全部)，就是列出該分類下所有藥的庫存
             res = df_inventory[
                 (df_inventory["庫存狀態"] == "有貨") & 
                 (df_inventory["是否上架"] == True)
             ].copy()
             
-            # 過濾藥品：如果是選 "全部"，則範圍限定在 filtered_drugs_df (分類過濾後的名單) 裡面的藥
             if s_drug == "全部":
                 valid_drugs = filtered_drugs_df["藥品名稱"].tolist()
                 res = res[res["藥品名稱"].isin(valid_drugs)]
             else:
                 res = res[res["藥品名稱"] == s_drug]
 
-            # 過濾縣市
             if s_city != "全台灣":
                 res = res[res["縣市"] == s_city]
             
-            # 排序與顯示
             res['縣市'] = pd.Categorical(res['縣市'], categories=cities_list, ordered=True)
             res = res.sort_values(by=["藥品名稱", "縣市"])
 
             if res.empty:
                 st.info("目前條件下尚無診所回報供貨。")
-                # 這裡也可以加一個按鈕導引去許願
                 if st.button("沒貨？幫我集氣 (+1)", key="btn_empty_wish"):
                     st.session_state.current_tab = "📢 民眾許願"
                     st.rerun()
             else:
                 st.success(f"找到 {len(res)} 筆供貨資訊")
                 
-                # 初始化 session state
                 if 'active_feedback_id' not in st.session_state:
                     st.session_state.active_feedback_id = None
 
-                # 顯示列表 (迴圈部分維持不變)
                 for idx, row in res.iterrows():
                     cid = f"{row['診所名稱']}_{idx}"
                     clinic_code = row.get('機構代碼', row['診所名稱'])
@@ -506,7 +444,7 @@ elif selected_tab == "🔍 找哪裡有藥":
                         st.markdown(f"📍 **{row['縣市']}** | 🏷️ {cond_str}")
                         if row['備註']: st.info(f"備註: {row['備註']}")
 
-                        # 載入回饋留言邏輯 (維持不變)
+                        # 留言顯示
                         if not df_feedback.empty:
                             revs = df_feedback[(df_feedback['機構代碼']==clinic_code) & (df_feedback['藥品名稱']==drug_name)]
                             if not revs.empty:
@@ -517,24 +455,25 @@ elif selected_tab == "🔍 找哪裡有藥":
                                     for _, r in revs.iterrows():
                                         st.text(f"{str(r['時間'])[:10]} {('✅' if '認證' in str(r['回饋類型']) else '⚠️')} : {r['備註']}")
 
-                    # ... (前面是顯示診所資訊與留言的程式碼) ...
-
-                        # [填寫回報區塊]
+                        # 回報按鈕
+                        if st.session_state.active_feedback_id != cid:
+                            if st.button("💬 我要回報/認證", key=f"btn_open_{cid}"):
+                                st.session_state.active_feedback_id = cid
+                                st.rerun()
+                        
+                        # [填寫回報區塊] - 已修復
                         if st.session_state.active_feedback_id == cid:
                             st.markdown("---")
                             st.markdown("##### 📝 填寫回報 (需驗證 Email 以防惡意洗版)")
                             
-                            # 定義這個診所專屬的驗證狀態 Key
                             v_key = f"verified_{cid}"
                             if v_key not in st.session_state: 
                                 st.session_state[v_key] = False
                             
-                            # 狀況 A: 尚未驗證 -> 顯示驗證介面
+                            # A: 尚未驗證
                             if not st.session_state[v_key]:
                                 with st.container(border=True):
                                     col_f1, col_f2 = st.columns([1, 1])
-                                    
-                                    # 左邊：輸入 Email 並寄送
                                     umail = col_f1.text_input("您的 Email", key=f"mail_{cid}")
                                     if col_f1.button("寄送驗證碼", key=f"send_{cid}"):
                                         if umail:
@@ -547,10 +486,8 @@ elif selected_tab == "🔍 找哪裡有藥":
                                         else:
                                             st.warning("請輸入 Email")
                                     
-                                    # 右邊：輸入驗證碼並驗證
                                     ucode = col_f2.text_input("輸入驗證碼", max_chars=6, key=f"code_in_{cid}")
                                     if col_f2.button("驗證身分", key=f"verify_{cid}"):
-                                        # 比對驗證碼
                                         saved_code = st.session_state.get(f"code_{cid}")
                                         if ucode and saved_code and ucode == saved_code:
                                             st.session_state[v_key] = True
@@ -560,37 +497,28 @@ elif selected_tab == "🔍 找哪裡有藥":
                                         else:
                                             st.error("驗證碼錯誤或過期")
 
-                            # 狀況 B: 已驗證 -> 顯示填寫表單
+                            # B: 已驗證 -> 顯示表單
                             else:
-                                # 使用 st.form 鎖定輸入內容
                                 with st.form(key=f"feedback_form_{cid}"):
                                     st.caption(f"由 {st.session_state.get(f'mail_{cid}')} 回報")
-                                    
                                     fb_type = st.radio("回報類型", ["✅ 認證有貨", "⚠️ 資訊不實/缺貨"], key=f"type_{cid}")
-                                    cmmt = st.text_area("詳細說明 (例如：剛剛打電話去問還有貨...)", key=f"cmmt_{cid}")
+                                    cmmt = st.text_area("詳細說明", key=f"cmmt_{cid}")
                                     
                                     col_b1, col_b2 = st.columns([1, 4])
-                                    
-                                    # 表單按鈕
                                     submitted = col_b1.form_submit_button("📤 送出回報", type="primary")
                                     cancelled = col_b2.form_submit_button("取消")
                                 
-                                # 送出邏輯
                                 if submitted:
-                                    # 取得 Email (從 key 抓取)
                                     user_mail = st.session_state.get(f"mail_{cid}")
                                     if submit_feedback(clinic_code, drug_name, user_mail, fb_type, cmmt):
                                         st.success("感謝您的回報！")
-                                        st.session_state.active_feedback_id = None # 關閉表單
-                                        load_feedback_data.clear() # 清除快取以顯示最新留言
+                                        st.session_state.active_feedback_id = None
+                                        load_feedback_data.clear()
                                         time.sleep(1)
                                         st.rerun()
 
-                                # 取消邏輯
                                 if cancelled:
                                     st.session_state.active_feedback_id = None
                                     st.rerun()
-                                    
         else:
              st.info("資料庫讀取中，請稍候...")
-
