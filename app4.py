@@ -56,6 +56,25 @@ def load_requests_raw():
         return pd.DataFrame([{'想要藥品':i['values'].get('想要藥品',''), '所在縣市':i['values'].get('所在縣市','')} for i in data['items']])
     except: return pd.DataFrame()
 
+@st.cache_data(ttl=10)
+def load_wishlist_data():
+    url = f'https://coda.io/apis/v1/docs/{DOC_ID}/tables/{TABLE_ID_WISHLIST}/rows?useColumnNames=true&limit=100'
+    try:
+        r = requests.get(url, headers=headers)
+        r.raise_for_status()
+        data = r.json()
+        # 抓取我們需要的欄位：建議藥名、狀態
+        return pd.DataFrame([
+            {
+                '建議藥名': i['values'].get('建議藥名', ''),
+                '狀態': i['values'].get('狀態', ''),
+                '許願者Email': i['values'].get('許願者Email', '')
+            } 
+            for i in data['items']
+        ])
+    except:
+        return pd.DataFrame()
+
 @st.cache_data(ttl=30)
 def load_inventory_data():
     url = f'https://coda.io/apis/v1/docs/{DOC_ID}/tables/{TABLE_ID_INVENTORY}/rows?useColumnNames=true'
@@ -225,7 +244,22 @@ if selected_tab == "📢 民眾許願":
                         st.rerun()
 
     st.divider()
+
+    st.divider()
+    df_wish = load_wishlist_data()
     
+    # 過濾出狀態是 "待處理" 的資料
+    if not df_wish.empty and "狀態" in df_wish.columns:
+        pending_drugs = df_wish[df_wish["狀態"] == "待處理"]
+        
+        if not pending_drugs.empty:
+            st.info(f"🆕 目前有 {len(pending_drugs)} 款新藥正在審核中，即將加入票選：")
+            
+            # 用類似標籤的方式顯示藥名
+            # 這裡把藥名串接起來顯示，例如：欣剋疹帶狀疱疹疫苗、某某藥...
+            drug_names = pending_drugs["建議藥名"].unique().tolist()
+            st.write("、".join([f"**{d}**" for d in drug_names]))
+             
     # --- 熱門許願榜 ---
     st.subheader("🔥 大家都在找這些藥 (點擊 +1 幫忙集氣)")
 
@@ -424,6 +458,7 @@ elif selected_tab == "🔍 找哪裡有藥":
         
     else:
         st.info("資料庫讀取中...")
+
 
 
 
