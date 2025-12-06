@@ -24,6 +24,7 @@ TABLE_ID_CITIES = 'DB_Cities'
 TABLE_ID_INBOX = 'DB_Supply_Inbox'
 TABLE_ID_INVENTORY = 'DB_Inventory'
 TABLE_ID_FEEDBACK = 'DB_Feedback'
+TABLE_ID_WISHLIST = 'DB_Wishlist'
 
 headers = {'Authorization': f'Bearer {CODA_API_KEY}'}
 
@@ -84,6 +85,27 @@ def submit_wish(email, region, drug):
     try: requests.post(url, headers=headers, json=payload).raise_for_status(); return True
     except: return False
 
+def submit_raw_wish(email, region, new_drug_name):
+    payload = {
+        "rows": [
+            {
+                "cells": [
+                    {"column": "許願者Email", "value": str(email)},
+                    {"column": "所在縣市", "value": str(region)},      # 這裡送出 "基隆市"，Coda 會自動連到 DB_Cities
+                    {"column": "建議藥名", "value": str(new_drug_name)}, # 這是純文字
+                    {"column": "狀態", "value": "待處理"}             # 預設狀態
+                ]
+            }
+        ]
+    }
+    
+    try:
+        requests.post(url, headers=headers, json=payload).raise_for_status()
+        return True
+    except Exception as e:
+        print(f"寫入 Wishlist 失敗: {e}")
+        return False
+
 def submit_supply(code, name, region, drug, conds, email):
     url=f'https://coda.io/apis/v1/docs/{DOC_ID}/tables/{TABLE_ID_INBOX}/rows'
     payload={"rows":[{"cells":[{"column":"機構代碼","value":code},{"column":"診所名稱","value":name},{"column":"所在縣市","value":region},{"column":"提供藥品","value":drug},{"column":"給付條件","value":conds},{"column":"聯絡Email","value":email}]}]}
@@ -126,95 +148,99 @@ df_feedback = load_feedback_data()
 if df_drugs.empty: st.stop()
 
 # ==========================================
-# Tab 1: 民眾許願 (請完全覆蓋這一段)
+# Tab 1: 民眾許願 (最終版：支援 Relation 與 Wishlist 分流)
 # ==========================================
 if selected_tab == "📢 民眾許願":
     st.markdown("### 🎋 許願池 & 缺藥排行")
 
-    # --- 1. 讀取並統計數據 ---
+    # 讀取現有計票
     df_req = load_requests_raw()
     
-    # 統計每個藥品出現的次數 (推薦排行榜)
+    # 統計排行榜
     if not df_req.empty and "想要藥品" in df_req.columns:
-        # value_counts 會算出頻次，reset_index 後變成 DataFrame
         rank_df = df_req["想要藥品"].value_counts().reset_index()
         rank_df.columns = ["想要藥品", "人次"]
     else:
         rank_df = pd.DataFrame(columns=["想要藥品", "人次"])
 
-    # --- 2. 新增許願區塊 (支援手動輸入新藥) ---
+    # --- 新增許願 / 推薦新藥區塊 ---
     with st.expander("➕ 找不到不在榜上的藥？點此發起新許願", expanded=False):
         with st.form("wish_form"):
             st.write("填寫新藥品需求：")
             u_email = st.text_input("Email (選填)", placeholder="name@example.com")
             
-            # 縣市選擇
-            u_region = st.selectbox("您的縣市", cities_list) if cities_list else st.text_input("縣市")
+            # 縣市選擇 (對應 DB_Cities Relation)
+            if cities_list:
+                u_region = st.selectbox("您的縣市", cities_list)
+            else:
+                u_region = st.text_input("您的縣市")
             
             st.markdown("---")
             st.caption("請選擇藥品，若清單中沒有，請選「其他」並手動輸入")
             
-            # 1. 準備選單選項：把 "其他" 放最前面，方便點選
+            # 藥品選單
             drug_options = ["❓ 其他 (自行輸入)"] + df_drugs["藥品名稱"].tolist()
-            
-            # 2. 兩個欄位都顯示
             u_drug_select = st.selectbox("選擇藥品", drug_options)
             u_drug_manual = st.text_input("輸入新藥名", placeholder="若上方選擇「其他」，請在此輸入藥名")
             
             # 送出按鈕
             if st.form_submit_button("🚀 送出新許願", type="primary"):
-                # 邏輯判斷：決定最終藥名是選的還是寫的
+                # 處理 Email
+                final_email = u_email if u_email else "anonymous@wish"
+                
+                # === 分流邏輯 ===
+                # 1. 民眾手動輸入新藥 -> 寫入 DB_Wishlist (待審核)
                 if u_drug_select == "❓ 其他 (自行輸入)":
-                    final_drug = u_drug_manual.strip() # 去除前後空白
+                    final_drug = u_drug_manual.strip()
+                    if not final_drug:
+                        st.error("❌ 請輸入藥品名稱！")
+                    else:
+                        if submit_raw_wish(final_email, u_region, final_drug):
+                            st.success(f"收到！「{final_drug}」已列入待審核清單，管理員審核後將開放票選。")
+                            time.sleep(2)
+                            st.rerun()
+
+                # 2. 民眾選擇現有藥品 -> 寫入 DB_Requests (直接計票)
                 else:
                     final_drug = u_drug_select
-                
-                # 檢查是否有內容
-                if not final_drug:
-                    st.error("❌ 請選擇藥品或輸入新藥名！")
-                else:
-                    # 如果 email 沒填，給個預設標記
-                    final_email = u_email if u_email else "anonymous@wish"
-                    
                     if submit_wish(final_email, u_region, final_drug):
                         st.success(f"已記錄您的需求：{final_drug}")
-                        load_requests_raw.clear() # 清除快取
+                        load_requests_raw.clear()
                         time.sleep(1)
-                        st.rerun() # 重整畫面
+                        st.rerun()
 
     st.divider()
     
-    # --- 3. 熱門許願榜 (推薦藥品 & +1 功能) ---
+    # --- 熱門許願榜 ---
     st.subheader("🔥 大家都在找這些藥 (點擊 +1 幫忙集氣)")
 
     if rank_df.empty:
         st.info("目前還沒有人許願，搶頭香嗎？👆")
     else:
-        # 取前 15 名顯示
         for idx, row in rank_df.head(15).iterrows():
             drug_name = row["想要藥品"]
             count = row["人次"]
             
-            # 建立兩欄：左邊文字，右邊按鈕
             c_text, c_btn = st.columns([4, 1])
-            
             with c_text:
                 st.markdown(f"**💊 {drug_name}**")
-                # 進度條 (視覺化熱度，假設 50 人次算滿)
                 st.progress(min(count / 50.0, 1.0))
                 st.caption(f"目前集氣：{count} 人次")
             
             with c_btn:
-                # ⚠️ 關鍵：Key 必須唯一，不然會報錯
+                # 點擊 +1，預設帶入 "全台灣" (或您可改為預設某個縣市)
+                # 若 DB_Requests 的縣市也是 Relation，這裡寫入文字 "全台灣" 也必須在 DB_Cities 裡有對應資料
+                # 建議：若 DB_Cities 裡有 "全台灣" 這個選項最好，若沒有，請改帶入 cities_list[0] 或其他有效縣市
                 if st.button(f"🙋‍♂️ +1", key=f"plus1_{idx}_{drug_name}"):
-                    # 按下按鈕，直接幫忙送出一筆 "plus1" 的資料
-                    if submit_wish("plus1@vote", "全台灣", drug_name):
+                    # 注意：這裡的縣市建議使用一個通用值
+                    default_city = "全台灣" if "全台灣" in cities_list else cities_list[0]
+                    
+                    if submit_wish("plus1@vote", default_city, drug_name):
                         st.toast(f"已為 {drug_name} +1！")
-                        load_requests_raw.clear() # 清除快取
+                        load_requests_raw.clear()
                         time.sleep(0.5)
-                        st.rerun() # 馬上重整看數字跳動
-            
-            st.divider() # 分隔線
+                        st.rerun()
+            st.divider()
 
 # ==========================================
 # Tab 2: 診所回報
@@ -383,6 +409,7 @@ elif selected_tab == "🔍 找哪裡有藥":
         
     else:
         st.info("資料庫讀取中...")
+
 
 
 
