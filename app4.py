@@ -249,3 +249,66 @@ with tab3:
         
         st.markdown("#### 📋 詳細數據")
         st.dataframe(
+            df_detailed,
+            column_config={
+                "想要藥品": "藥品名稱",
+                "所在縣市": "區域",
+                "人次": st.column_config.NumberColumn("許願人次", format="%d")
+            },
+            hide_index=True,
+            width='stretch'
+        )
+    else:
+        st.info("尚無許願資料")
+
+# --- Tab 4: 找藥 (含回饋驗證) ---
+with tab4:
+    st.markdown("### 🔍 查詢哪裡有藥")
+    col_s1, col_s2 = st.columns(2)
+    with col_s1: search_drug = st.selectbox("藥品", df_drugs["藥品名稱"].tolist(), key="sd")
+    with col_s2: search_city = st.selectbox("縣市", ["全台灣"] + cities_list, key="sc")
+
+    if not df_inventory.empty:
+        res = df_inventory[(df_inventory["藥品名稱"]==search_drug) & (df_inventory["是否上架"]==True) & (df_inventory["庫存狀態"]!="缺貨")]
+        if search_city != "全台灣": res = res[res["縣市"]==search_city]
+        
+        if res.empty: st.warning(f"{search_city} 尚無 {search_drug} 的庫存。")
+        else:
+            st.success(f"找到 {len(res)} 間診所")
+            for idx, row in res.iterrows():
+                cid = f"{row['診所名稱']}_{idx}"
+                with st.container(border=True):
+                    st.markdown(f"#### 🏥 {row['診所名稱']}")
+                    conds = row['給付條件']
+                    st.markdown("  |  ".join([f"`{c}`" for c in conds]) if isinstance(conds, list) else f"`{conds}`")
+                    st.text(f"📍 {row['縣市']}")
+                    if row['備註']: st.info(f"備註: {row['備註']}")
+                    
+                    with st.expander("💬 認證 / 回報"):
+                        v_key, c_key, e_key = f"vs_{cid}", f"vc_{cid}", f"ve_{cid}"
+                        if v_key not in st.session_state: st.session_state[v_key] = False
+                        
+                        if not st.session_state[v_key]:
+                            umail = st.text_input("Email", key=f"em_{cid}")
+                            b1, b2 = st.columns([1,2])
+                            with b1:
+                                if st.button("寄碼", key=f"bs_{cid}"):
+                                    code = str(random.randint(100000,999999))
+                                    st.session_state[c_key], st.session_state[e_key] = code, umail
+                                    send_verification_email(umail, code)
+                                    st.toast("已寄出")
+                            with b2:
+                                ucode = st.text_input("驗證碼", max_chars=6, key=f"cd_{cid}")
+                                if st.button("驗證", key=f"bv_{cid}"):
+                                    if ucode == st.session_state.get(c_key):
+                                        st.session_state[v_key] = True
+                                        st.rerun()
+                        else:
+                            st.success("已驗證")
+                            fb_type = st.radio("類型", ["✅ 認證有貨", "⚠️ 資訊不實"], key=f"ft_{cid}")
+                            cmmt = st.text_area("說明", key=f"cm_{cid}")
+                            if st.button("送出", key=f"sub_{cid}"):
+                                # 嘗試抓取代碼，若無則用名稱
+                                t_code = row.get('機構代碼', row['診所名稱'])
+                                if submit_feedback(t_code, search_drug, st.session_state[e_key], fb_type, cmmt):
+                                    st.success("感謝回報")
