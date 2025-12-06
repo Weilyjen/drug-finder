@@ -86,7 +86,7 @@ def load_requests_raw():
 
 @st.cache_data(ttl=30)
 def load_inventory_data():
-    """讀取庫存"""
+    """讀取庫存 (關鍵：必須讀取代碼)"""
     url = f'https://coda.io/apis/v1/docs/{DOC_ID}/tables/{TABLE_ID_INVENTORY}/rows?useColumnNames=true'
     try:
         response = requests.get(url, headers=headers)
@@ -95,11 +95,11 @@ def load_inventory_data():
         rows = []
         for item in data['items']:
             vals = item['values']
-            # 優先抓取 '縣市1' (新版)，若無則抓 '縣市'
+            # 優先讀取 '縣市1' (新版)，若無則讀 '縣市'
             city_val = vals.get("縣市1", vals.get("縣市", ""))
             rows.append({
-                "診所名稱": vals.get("診所", ""), 
-                "機構代碼": vals.get("機構代碼", ""), 
+                "診所名稱": vals.get("診所", ""), # 這是 Display Column，會抓到名稱
+                "機構代碼": vals.get("機構代碼", ""), # 這是我們手動加的文字欄位，抓代碼
                 "藥品名稱": vals.get("藥品", ""),
                 "縣市": city_val,  
                 "庫存狀態": vals.get("庫存狀態", ""),
@@ -113,7 +113,7 @@ def load_inventory_data():
 
 @st.cache_data(ttl=10)
 def load_feedback_data():
-    """讀取民眾回饋"""
+    """讀取回饋 (Display Column 是代碼，所以 '機構代碼' 會抓到代碼)"""
     url = f'https://coda.io/apis/v1/docs/{DOC_ID}/tables/{TABLE_ID_FEEDBACK}/rows?useColumnNames=true&limit=500'
     try:
         response = requests.get(url, headers=headers)
@@ -164,6 +164,7 @@ def submit_supply(code, name, region, drug_name, conditions, email):
     except: return False
 
 def submit_feedback(code, drug, email, feedback_type, comment):
+    # 因為 DB_Feedback 的 Display Column 是「機構代碼」，所以這裡必須傳入代碼
     url = f'https://coda.io/apis/v1/docs/{DOC_ID}/tables/{TABLE_ID_FEEDBACK}/rows'
     payload = {"rows": [{"cells": [{"column": "機構代碼", "value": code}, {"column": "藥品名稱", "value": drug}, {"column": "回饋類型", "value": feedback_type}, {"column": "民眾Email", "value": email}, {"column": "備註", "value": comment}]}]}
     try: requests.post(url, headers=headers, json=payload).raise_for_status(); return True
@@ -262,7 +263,7 @@ with tab3:
     else:
         st.info("尚無許願資料")
 
-# --- Tab 4: 找藥 ---
+# --- Tab 4: 找藥 (修正顯示邏輯) ---
 with tab4:
     st.markdown("### 🔍 藥品供貨清單")
     col_s1, col_s2 = st.columns(2)
@@ -286,11 +287,12 @@ with tab4:
             
             for idx, row in res.iterrows():
                 cid = f"{row['診所名稱']}_{idx}"
-                clinic_code = row.get('機構代碼', '')
+                # 這裡抓取代碼：優先抓 '機構代碼'，若無則抓 '診所名稱' (防止當機)
+                clinic_code = row.get('機構代碼', row['診所名稱'])
                 drug_name = row['藥品名稱']
                 
                 with st.container(border=True):
-                    # 診所資訊
+                    # --- 診所資訊 (顯示名稱) ---
                     st.markdown(f"#### 💊 {drug_name}  |  🏥 {row['診所名稱']}")
                     conds = row['給付條件']
                     cond_str = "  |  ".join([f"`{c}`" for c in conds]) if isinstance(conds, list) else f"`{conds}`"
@@ -298,12 +300,14 @@ with tab4:
                     st.markdown(f"🏷️ 給付條件：{cond_str}")
                     if row['備註']: st.info(f"備註: {row['備註']}")
                     
-                    # 評價統計
+                    # --- 評價統計 (比對代碼) ---
                     if not df_feedback.empty:
+                        # 關鍵：這裡用 code 來比對
                         reviews = df_feedback[(df_feedback['機構代碼'] == clinic_code) & (df_feedback['藥品名稱'] == drug_name)]
                         if not reviews.empty:
                             count_ok = len(reviews[reviews['回饋類型'].str.contains("認證", na=False)])
                             count_bad = len(reviews[reviews['回饋類型'].str.contains("不實", na=False)])
+                            
                             st.markdown("---")
                             rc1, rc2 = st.columns(2)
                             with rc1:
@@ -318,13 +322,12 @@ with tab4:
                                     time_str = r_row['時間'][:10] if r_row['時間'] else ""
                                     st.text(f"{icon} {time_str} - {msg}")
                     
-                    # 回報區塊
+                    # --- 回報按鈕 (寫入代碼) ---
                     with st.expander("💬 認證 / 回報"):
                         v_key, c_key, e_key = f"vs_{cid}", f"vc_{cid}", f"ve_{cid}"
                         if v_key not in st.session_state: st.session_state[v_key] = False
                         
                         if not st.session_state[v_key]:
-                            # 注意這裡的縮排
                             umail = st.text_input("Email", key=f"em_{cid}")
                             b1, b2 = st.columns([1,2])
                             with b1:
@@ -344,8 +347,7 @@ with tab4:
                             fb_type = st.radio("類型", ["✅ 認證有貨", "⚠️ 資訊不實"], key=f"ft_{cid}")
                             cmmt = st.text_area("說明", key=f"cm_{cid}")
                             if st.button("送出", key=f"sub_{cid}"):
-                                t_code = row.get('機構代碼', row['診所名稱'])
-                                if submit_feedback(t_code, row['藥品名稱'], st.session_state[e_key], fb_type, cmmt):
+                                if submit_feedback(clinic_code, drug_name, st.session_state[e_key], fb_type, cmmt):
                                     st.success("感謝回報")
                                     time.sleep(1)
                                     st.cache_data.clear()
