@@ -517,41 +517,80 @@ elif selected_tab == "🔍 找哪裡有藥":
                                     for _, r in revs.iterrows():
                                         st.text(f"{str(r['時間'])[:10]} {('✅' if '認證' in str(r['回饋類型']) else '⚠️')} : {r['備註']}")
 
-                        # 回報按鈕邏輯 (維持不變)
-                        if st.session_state.active_feedback_id != cid:
-                            if st.button("💬 我要回報/認證", key=f"btn_open_{cid}"):
-                                st.session_state.active_feedback_id = cid
-                                st.rerun()
-                        
-                        # 回報表單顯示 (維持不變，請確保這裡的縮排與之前修正的一致)
+                    # ... (前面是顯示診所資訊與留言的程式碼) ...
+
+                        # [填寫回報區塊]
                         if st.session_state.active_feedback_id == cid:
                             st.markdown("---")
-                            # ... (請貼上之前修正好的 回報表單 程式碼) ...
-                            # 為了節省篇幅，請保留您之前修正好的 verified 邏輯與 form 邏輯
+                            st.markdown("##### 📝 填寫回報 (需驗證 Email 以防惡意洗版)")
                             
-                            # (以下為簡略示意外殼，請使用您目前運作正常的版本)
+                            # 定義這個診所專屬的驗證狀態 Key
                             v_key = f"verified_{cid}"
-                            if v_key not in st.session_state: st.session_state[v_key] = False
+                            if v_key not in st.session_state: 
+                                st.session_state[v_key] = False
                             
+                            # 狀況 A: 尚未驗證 -> 顯示驗證介面
                             if not st.session_state[v_key]:
-                                # ... 驗證碼邏輯 ...
-                                st.warning("請先驗證 Email (請貼回原有程式碼)")
-                                # 這裡請貼回您原本的身分驗證區塊代碼
+                                with st.container(border=True):
+                                    col_f1, col_f2 = st.columns([1, 1])
+                                    
+                                    # 左邊：輸入 Email 並寄送
+                                    umail = col_f1.text_input("您的 Email", key=f"mail_{cid}")
+                                    if col_f1.button("寄送驗證碼", key=f"send_{cid}"):
+                                        if umail:
+                                            code = str(random.randint(100000, 999999))
+                                            st.session_state[f"code_{cid}"] = code
+                                            if send_verification_email(umail, code):
+                                                st.toast(f"驗證碼已寄至 {umail}")
+                                            else:
+                                                st.error("寄送失敗，請檢查 Email 格式")
+                                        else:
+                                            st.warning("請輸入 Email")
+                                    
+                                    # 右邊：輸入驗證碼並驗證
+                                    ucode = col_f2.text_input("輸入驗證碼", max_chars=6, key=f"code_in_{cid}")
+                                    if col_f2.button("驗證身分", key=f"verify_{cid}"):
+                                        # 比對驗證碼
+                                        saved_code = st.session_state.get(f"code_{cid}")
+                                        if ucode and saved_code and ucode == saved_code:
+                                            st.session_state[v_key] = True
+                                            st.success("驗證成功！請填寫下方內容")
+                                            time.sleep(0.5)
+                                            st.rerun()
+                                        else:
+                                            st.error("驗證碼錯誤或過期")
+
+                            # 狀況 B: 已驗證 -> 顯示填寫表單
                             else:
+                                # 使用 st.form 鎖定輸入內容
                                 with st.form(key=f"feedback_form_{cid}"):
-                                    fb_type = st.radio("回報類型", ["✅ 認證有貨", "⚠️ 資訊不實"], key=f"type_{cid}")
-                                    cmmt = st.text_area("詳細說明", key=f"cmmt_{cid}")
+                                    st.caption(f"由 {st.session_state.get(f'mail_{cid}')} 回報")
+                                    
+                                    fb_type = st.radio("回報類型", ["✅ 認證有貨", "⚠️ 資訊不實/缺貨"], key=f"type_{cid}")
+                                    cmmt = st.text_area("詳細說明 (例如：剛剛打電話去問還有貨...)", key=f"cmmt_{cid}")
+                                    
                                     col_b1, col_b2 = st.columns([1, 4])
-                                    submitted = col_b1.form_submit_button("📤 送出", type="primary")
+                                    
+                                    # 表單按鈕
+                                    submitted = col_b1.form_submit_button("📤 送出回報", type="primary")
                                     cancelled = col_b2.form_submit_button("取消")
                                 
+                                # 送出邏輯
                                 if submitted:
-                                    # ... submit_feedback 邏輯 ...
-                                    st.success("回報成功")
-                                    st.session_state.active_feedback_id = None
-                                    st.rerun()
+                                    # 取得 Email (從 key 抓取)
+                                    user_mail = st.session_state.get(f"mail_{cid}")
+                                    if submit_feedback(clinic_code, drug_name, user_mail, fb_type, cmmt):
+                                        st.success("感謝您的回報！")
+                                        st.session_state.active_feedback_id = None # 關閉表單
+                                        load_feedback_data.clear() # 清除快取以顯示最新留言
+                                        time.sleep(1)
+                                        st.rerun()
+
+                                # 取消邏輯
                                 if cancelled:
                                     st.session_state.active_feedback_id = None
                                     st.rerun()
+                                    
         else:
              st.info("資料庫讀取中，請稍候...")
+
