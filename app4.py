@@ -142,7 +142,7 @@ if selected_tab == "📢 民眾許願":
     else:
         rank_df = pd.DataFrame(columns=["想要藥品", "人次"])
 
-    # --- 2. 新增許願區塊 (使用 Expander 收納，讓畫面更乾淨) ---
+    # --- 2. 新增許願區塊 (支援手動輸入新藥) ---
     with st.expander("➕ 找不到不在榜上的藥？點此發起新許願", expanded=False):
         with st.form("wish_form"):
             st.write("填寫新藥品需求：")
@@ -151,19 +151,36 @@ if selected_tab == "📢 民眾許願":
             # 縣市選擇
             u_region = st.selectbox("您的縣市", cities_list) if cities_list else st.text_input("縣市")
             
-            # 藥品選擇 (這裡沿用之前的 df_drugs)
-            u_drug_input = st.selectbox("選擇或輸入藥品", df_drugs["藥品名稱"].tolist())
+            st.markdown("---")
+            st.caption("請選擇藥品，若清單中沒有，請選「其他」並手動輸入")
+            
+            # 1. 準備選單選項：把 "其他" 放最前面，方便點選
+            drug_options = ["❓ 其他 (自行輸入)"] + df_drugs["藥品名稱"].tolist()
+            
+            # 2. 兩個欄位都顯示
+            u_drug_select = st.selectbox("選擇藥品", drug_options)
+            u_drug_manual = st.text_input("輸入新藥名", placeholder="若上方選擇「其他」，請在此輸入藥名")
             
             # 送出按鈕
             if st.form_submit_button("🚀 送出新許願", type="primary"):
-                # 如果 email 沒填，給個預設標記
-                final_email = u_email if u_email else "anonymous@wish"
+                # 邏輯判斷：決定最終藥名是選的還是寫的
+                if u_drug_select == "❓ 其他 (自行輸入)":
+                    final_drug = u_drug_manual.strip() # 去除前後空白
+                else:
+                    final_drug = u_drug_select
                 
-                if submit_wish(final_email, u_region, u_drug_input):
-                    st.success(f"已記錄您的需求：{u_drug_input}")
-                    load_requests_raw.clear() # 清除快取
-                    time.sleep(1)
-                    st.rerun() # 重整畫面
+                # 檢查是否有內容
+                if not final_drug:
+                    st.error("❌ 請選擇藥品或輸入新藥名！")
+                else:
+                    # 如果 email 沒填，給個預設標記
+                    final_email = u_email if u_email else "anonymous@wish"
+                    
+                    if submit_wish(final_email, u_region, final_drug):
+                        st.success(f"已記錄您的需求：{final_drug}")
+                        load_requests_raw.clear() # 清除快取
+                        time.sleep(1)
+                        st.rerun() # 重整畫面
 
     st.divider()
     
@@ -366,6 +383,7 @@ elif selected_tab == "🔍 找哪裡有藥":
         
     else:
         st.info("資料庫讀取中...")
+
 
 
 
